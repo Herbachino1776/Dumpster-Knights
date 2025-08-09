@@ -3,369 +3,443 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>Endless Street Brawler+</title>
+<title>Dumpster Pinball Rampage</title>
 <style>
-  * { -webkit-tap-highlight-color: transparent; user-select: none; touch-action: none; }
+  * { -webkit-tap-highlight-color: transparent; user-select:none; touch-action:none; }
   html,body { margin:0; height:100%; background:#000; }
-  #game { display:block; margin:0 auto; image-rendering: pixelated; background:#111; }
+  #game { display:block; margin:0 auto; background:#111; image-rendering: pixelated; }
   #hud {
     position:absolute; left:8px; top:8px; color:#fff; font:14px system-ui; text-shadow:0 2px 4px #000;
     display:flex; gap:12px; align-items:center; flex-wrap:wrap;
   }
-  #hpbar { width:160px; height:10px; background:#333; border:1px solid #111; }
-  #hpfill { height:100%; width:100%; background:#2ecc71; }
-  #msg { position:absolute; left:50%; top:12px; transform:translateX(-50%); color:#fff; font:16px system-ui; text-shadow:0 2px 6px #000; }
-  .pill {
-    padding:2px 6px; border-radius:6px; background:rgba(0,0,0,.4); border:1px solid rgba(255,255,255,.15);
+  .pill { padding:2px 8px; border-radius:8px; background:rgba(0,0,0,.45); border:1px solid rgba(255,255,255,.18); }
+  #overlay {
+    position:absolute; inset:0; display:none; align-items:center; justify-content:center; flex-direction:column;
+    color:#fff; text-shadow:0 2px 6px #000; background:rgba(0,0,0,.55); font:20px system-ui;
   }
+  #overlay .big { font-size:36px; margin-bottom:10px; }
   .btn {
-    position:absolute; bottom:16px; left:16px;
-    z-index:10; padding:12px 18px; border:none; border-radius:12px;
+    position:absolute; z-index:10; padding:10px 16px; border:none; border-radius:10px;
     background:rgba(255,255,255,0.25); color:#000; font:600 16px system-ui;
   }
   .btn:active { background:rgba(255,255,255,0.45); }
-  #overlay {
-    position:absolute; inset:0; display:none; align-items:center; justify-content:center; flex-direction:column;
-    color:#fff; font:22px system-ui; text-shadow:0 2px 6px #000; background:rgba(0,0,0,0.45);
-  }
-  #overlay .big { font-size:34px; margin-bottom:12px; }
+  #nudgeL { bottom:16px; left:16px; }
+  #nudgeR { bottom:16px; left:120px; }
 </style>
 </head>
 <body>
 <canvas id="game" width="800" height="400"></canvas>
 
 <div id="hud">
-  <div id="hpbar"><div id="hpfill"></div></div>
-  <div id="score" class="pill">0 m</div>
-  <div id="kills" class="pill">0 KOs</div>
-  <div id="sword" class="pill">Fists</div>
-  <div id="combo" class="pill">Combo x1</div>
+  <div id="score" class="pill">Score 0</div>
+  <div id="lives" class="pill">Balls 3</div>
+  <div id="mult"  class="pill">x1</div>
+  <div id="stage" class="pill">Junkyard</div>
 </div>
-<div id="msg"></div>
-<button id="btnAttack" class="btn">Attack</button>
+
+<button id="nudgeL" class="btn">Nudge ◀</button>
+<button id="nudgeR" class="btn">Nudge ▶</button>
 
 <div id="overlay">
-  <div class="big">Game Over</div>
-  <div id="finalStats"></div>
-  <button id="retry" class="btn" style="position:static; margin-top:16px;">Retry</button>
+  <div class="big" id="overTitle">Game Over</div>
+  <div id="overSub">Score: 0</div>
+  <button id="retry" class="btn" style="position:static; margin-top:12px;">Retry</button>
 </div>
 
 <script>
 (()=>{
-// ------- ASSET PATHS (no double extensions) -------
+// ---------- ASSET PATHS (must match your repo) ----------
 const PATHS = {
-  bg:     'assets/backgrounds/arena_junkyard_800x400.jpg',
+  backgrounds: [
+    {src: 'assets/backgrounds/arena_junkyard_800x400.jpg', label: 'Junkyard'},
+    {src: 'assets/backgrounds/arena_dark_alley_800x400.jpg', label: 'Dark Alley'},
+    {src: 'assets/backgrounds/arena_fortress_800x400.jpg', label: 'Scrap Fortress'}
+  ],
   player: 'assets/sprites/player/player_idle_1.png',
-  enemy:  'assets/sprites/enemies/street_thug_idle_1.png',
+  thug:   'assets/sprites/enemies/street_thug_idle_1.png',
   heal:   'assets/sprites/items/thermos_health.png',
   sword:  'assets/sprites/items/dumpster_sword.png'
 };
 
-// ------- DOM -------
+// ---------- DOM ----------
 const c = document.getElementById('game');
 const ctx = c.getContext('2d');
 const W = c.width, H = c.height;
+ctx.imageSmoothingEnabled = false;
 
-const hpFill = document.getElementById('hpfill');
-const scoreEl= document.getElementById('score');
-const killsEl= document.getElementById('kills');
-const swordEl= document.getElementById('sword');
-const comboEl= document.getElementById('combo');
-const msgEl  = document.getElementById('msg');
-
-const btnAttack = document.getElementById('btnAttack');
-const overlay   = document.getElementById('overlay');
+const scoreEl = document.getElementById('score');
+const livesEl = document.getElementById('lives');
+const multEl  = document.getElementById('mult');
+const stageEl = document.getElementById('stage');
+const overlay = document.getElementById('overlay');
+const overTitle = document.getElementById('overTitle');
+const overSub   = document.getElementById('overSub');
 const retryBtn  = document.getElementById('retry');
+const nudgeL    = document.getElementById('nudgeL');
+const nudgeR    = document.getElementById('nudgeR');
 
-function say(t, ms=1000){ msgEl.textContent=t; clearTimeout(say._t); say._t=setTimeout(()=>msgEl.textContent="", ms); }
-
-// ------- loader -------
+// ---------- Loader ----------
 function loadImage(src){
-  return new Promise((res)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=()=>res(null); i.src=src; });
-}
-const ASSETS = {};
-Promise.all([
-  loadImage(PATHS.bg),
-  loadImage(PATHS.player),
-  loadImage(PATHS.enemy),
-  loadImage(PATHS.heal),
-  loadImage(PATHS.sword),
-]).then(([bg,pl,en,heal,sword])=>{
-  ASSETS.bg=bg; ASSETS.player=pl; ASSETS.enemy=en; ASSETS.heal=heal; ASSETS.sword=sword;
-  start();
-});
-
-// ------- GAME STATE -------
-let scrollX = 0;                // background scroll
-let distance = 0;               // meters-ish
-let kills = 0;
-let dead = false;
-
-const player = {
-  x:120, y:H-96-24, w:64, h:96,
-  speed: 180, hp:100, dest:null,
-  hasSword:false, atkCD:0, atkTime:0, face:1
-};
-
-const enemies = []; // {x,y,w,h,spd,hp,hurtCD,type:'thug'|'runner'}
-const pickups = []; // {x,y,w,h,type:'heal'|'sword'}
-const slashFX  = []; // quick fading slashes
-
-// Combo system
-let combo = 1;
-let comboTimer = 0; // seconds left to chain
-const COMBO_WINDOW = 3; // seconds
-
-function reset(){
-  scrollX = 0; distance=0; kills=0; dead=false;
-  combo=1; comboTimer=0;
-  player.x=120; player.y=H-96-24; player.hp=100; player.dest=null; player.hasSword=false; player.atkCD=0; player.atkTime=0; player.face=1;
-  enemies.length=0; pickups.length=0; slashFX.length=0;
-  for(let i=0;i<3;i++) spawnEnemy( W + i*140 );
-  spawnPickup();
-}
-
-function start(){
-  reset();
-  requestAnimationFrame(loop);
-}
-
-// ------- Spawning -------
-function spawnEnemy(xpos){
-  const lane = H - 96 - 24 - Math.floor(Math.random()*3)*60; // 3 vertical lanes
-  // 20% chance runner: faster, 2 HP; else thug: normal speed, 3 HP
-  const runner = Math.random() < 0.2;
-  enemies.push({
-    x:xpos, y:lane, w:64, h:96,
-    spd: runner ? 120 + Math.random()*40 : 80 + Math.random()*30,
-    hp: runner ? 2 : 3,
-    hurtCD:0,
-    type: runner ? 'runner' : 'thug'
+  return new Promise(res=>{
+    const img = new Image();
+    img.onload = ()=>res(img);
+    img.onerror= ()=>res(null);
+    img.src = src;
   });
 }
-function spawnPickup(){
-  const type = (!player.hasSword && Math.random()<0.5) ? 'sword' : 'heal';
-  const y = H - 48 - 24 - Math.floor(Math.random()*3)*60;
-  const x = W + 200 + Math.random()*300;
-  pickups.push({ x, y, w:48, h:48, type });
+
+const ASSETS = { backgrounds: [] };
+Promise.all([
+  ...PATHS.backgrounds.map(b=>loadImage(b.src)),
+  loadImage(PATHS.player),
+  loadImage(PATHS.thug),
+  loadImage(PATHS.heal),
+  loadImage(PATHS.sword)
+]).then(imgs=>{
+  const bgImgs = imgs.slice(0, PATHS.backgrounds.length);
+  ASSETS.backgrounds = bgImgs.map((img,i)=>({img, label: PATHS.backgrounds[i].label}));
+  ASSETS.player = imgs[PATHS.backgrounds.length+0];
+  ASSETS.thug   = imgs[PATHS.backgrounds.length+1];
+  ASSETS.heal   = imgs[PATHS.backgrounds.length+2];
+  ASSETS.sword  = imgs[PATHS.backgrounds.length+3];
+  init();
+  requestAnimationFrame(loop);
+});
+
+// ---------- Game State ----------
+let stageIndex = 0;
+let score = 0;
+let lives = 3;
+let multiplier = 1;
+let powerTimer = 0; // sword power seconds
+let running = true;
+
+// Pinball ball (uses player sprite)
+const ball = {
+  x: W*0.2, y: H*0.5,
+  r: 18,
+  vx: 0, vy: 0,
+  maxSpeed: 520,
+  spin: 0, // visual-only
+  launching: true // waiting for drag-aim
+};
+
+// Bumpers/targets (thugs)
+let bumpers = []; // {x,y,r,alive:true}
+let pickups = []; // {x,y,w,h,type:'heal'|'sword',vx}
+let trail = [];   // motion trail segments
+
+// Drag aim
+let aiming = false;
+let aimStart = null;
+let aimVec   = {x:0,y:0};
+
+// ---------- Helpers ----------
+function resetBall() {
+  ball.x = W*0.2; ball.y = H*0.5;
+  ball.vx = 0; ball.vy = 0; ball.spin = 0;
+  ball.launching = true; aiming = false; aimStart = null; aimVec.x = aimVec.y = 0;
 }
+function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+function dist2(ax,ay,bx,by){ const dx=ax-bx, dy=ay-by; return dx*dx+dy*dy; }
+function norm(x,y){ const d=Math.hypot(x,y)||1; return {x:x/d,y:y/d}; }
+function randomInRect(m){ return {x: (Math.random()*0.6+0.3)*W, y: (Math.random()*0.7+0.15)*H}; }
 
-// ------- Input (tap-to-move) -------
-c.addEventListener('pointerdown', (e)=>{
-  if(dead) return;
-  const r = c.getBoundingClientRect();
-  const x = e.clientX - r.left;
-  const y = e.clientY - r.top;
-  player.dest = {
-    x: Math.max(0, Math.min(W-player.w, x - player.w/2)),
-    y: clampToLanes(y - player.h/2)
-  };
-  const newFace = Math.sign((player.dest.x ?? player.x) - player.x) || 1;
-  player.face = newFace;
-});
-btnAttack.addEventListener('pointerdown', ()=>{
-  if(dead) return;
-  if(player.atkCD<=0){ player.atkTime=0.16; player.atkCD=0.38; spawnSlash(); }
-});
-retryBtn.addEventListener('pointerdown', ()=>{
-  overlay.style.display='none';
-  reset();
-});
-
-// lock Y to lane centers
-function clampToLanes(y){
-  const lanes = [H-96-24, H-96-24-60, H-96-24-120]; // bottom, mid, top
-  let target = lanes[0];
-  let best = Infinity;
-  for(const L of lanes){
-    const d = Math.abs(L - y);
-    if(d<best){ best=d; target=L; }
+// ---------- Level generation ----------
+function makeStage(index){
+  bumpers.length = 0;
+  pickups.length = 0;
+  // Place 7–10 thugs as round bumpers
+  const n = 8 + Math.floor(Math.random()*3);
+  for(let i=0;i<n;i++){
+    const p = randomInRect();
+    const r = 26 + Math.random()*10;
+    // keep away from initial ball position
+    if (Math.hypot(p.x - W*0.2, p.y - H*0.5) < 120) { i--; continue; }
+    bumpers.push({x:p.x, y:p.y, r, alive:true});
   }
-  return target;
+  // Two pickups drifting left
+  spawnPickup('heal');
+  spawnPickup('sword');
+  resetBall();
+  multiplier = 1; powerTimer = 0;
+  stageEl.textContent = ASSETS.backgrounds[index] ? ASSETS.backgrounds[index].label : 'Stage';
+}
+function spawnPickup(type){
+  // spawn on right moving left
+  const y = (Math.random()*0.7+0.15)*H;
+  pickups.push({ x: W + 30, y, w:48, h:48, type, vx: -80 });
+}
+function nextStage(){
+  stageIndex = (stageIndex + 1) % (ASSETS.backgrounds.length || 1);
+  makeStage(stageIndex);
 }
 
-// ------- Helpers -------
-function rectHit(a,b){ return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y; }
+// ---------- Init ----------
+function init(){
+  makeStage(stageIndex);
+  // Input: pointer to set aim and launch
+  c.addEventListener('pointerdown', (e)=>{
+    if(!running) return;
+    if(!ball.launching) return; // only when waiting
+    aiming = true;
+    const r = c.getBoundingClientRect();
+    aimStart = { x: e.clientX - r.left, y: e.clientY - r.top };
+    aimVec = {x:0,y:0};
+  });
+  c.addEventListener('pointermove', (e)=>{
+    if(!aiming) return;
+    const r = c.getBoundingClientRect();
+    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    aimVec = { x: clamp(aimStart.x - mx, -220, 220), y: clamp(aimStart.y - my, -220, 220) };
+  });
+  c.addEventListener('pointerup', ()=>{
+    if(!aiming) return;
+    aiming = false;
+    // launch with opposite of drag (slingshot)
+    const scale = 2.2;
+    ball.vx = aimVec.x * scale;
+    ball.vy = aimVec.y * scale;
+    const sp = Math.hypot(ball.vx, ball.vy);
+    if(sp < 180){ // enforce minimum
+      const d = norm(ball.vx, ball.vy);
+      ball.vx = d.x * 180; ball.vy = d.y * 180;
+    }
+    // cap max
+    const sp2 = Math.hypot(ball.vx, ball.vy);
+    if(sp2 > ball.maxSpeed){
+      const d = ball.maxSpeed / sp2;
+      ball.vx *= d; ball.vy *= d;
+    }
+    ball.launching = false;
+  });
 
-// Slash visual
-function spawnSlash(){
-  const ax = player.face>=0 ? player.x + player.w : player.x - 24;
-  const ay = player.y + 28;
-  slashFX.push({ x:ax, y:ay, w:28, h:40, life:0, max:0.15, face:player.face });
+  // Nudges
+  nudgeL.addEventListener('pointerdown', ()=>{ if(!ball.launching){ ball.vx -= 80; ball.spin -= 0.2; } });
+  nudgeR.addEventListener('pointerdown', ()=>{ if(!ball.launching){ ball.vx += 80; ball.spin += 0.2; } });
+
+  retryBtn.addEventListener('pointerdown', ()=>{
+    score = 0; lives = 3; running = true; overlay.style.display='none';
+    stageIndex = 0; makeStage(stageIndex);
+    updateHud();
+  });
+
+  updateHud();
 }
 
-// ------- LOOP -------
-let last=0;
-function loop(ts){
-  const dt = Math.min(0.033, (ts-last)/1000 || 0.016);
-  last = ts;
+function updateHud(){
+  scoreEl.textContent = `Score ${score}`;
+  livesEl.textContent = `Balls ${lives}`;
+  multEl.textContent  = `x${multiplier}`;
+}
 
-  // update
-  if(!dead){
-    // scroll street & accumulate distance
-    scrollX = (scrollX + 80*dt) % W; // background speed
-    distance += 0.08 * (80*dt);      // rough meters
-    scoreEl.textContent = Math.floor(distance).toString() + ' m';
-    killsEl.textContent = kills + ' KOs';
-    swordEl.textContent = player.hasSword ? 'Sword' : 'Fists';
-    comboEl.textContent = `Combo x${combo}`;
+// ---------- Physics & Collisions ----------
+function update(dt){
+  if(!running) return;
 
-    // move player toward dest
-    if(player.dest){
-      const dx = player.dest.x - player.x;
-      const dy = player.dest.y - player.y;
-      const d  = Math.hypot(dx,dy);
-      const mv = player.speed * dt;
-      if(d <= mv){ player.x = player.dest.x; player.y = player.dest.y; player.dest=null; }
-      else { player.x += dx/d*mv; player.y += dy/d*mv; }
+  // If ball is “waiting”, just spin it and wait for launch
+  if(ball.launching){
+    ball.spin += dt * 4;
+  } else {
+    // Move
+    ball.x += ball.vx * dt;
+    ball.y += ball.vy * dt;
+
+    // Friction
+    ball.vx *= (1 - 0.02);
+    ball.vy *= (1 - 0.02);
+
+    // Speed cap
+    const sp = Math.hypot(ball.vx, ball.vy);
+    if(sp > ball.maxSpeed){
+      const k = ball.maxSpeed / sp;
+      ball.vx *= k; ball.vy *= k;
     }
 
-    // attack timers
-    if(player.atkCD>0)  player.atkCD -= dt;
-    if(player.atkTime>0) player.atkTime -= dt;
-
-    // combo timer decay
-    if(combo>1){
-      comboTimer -= dt;
-      if(comboTimer<=0){ combo=1; comboTimer=0; }
+    // Walls
+    if(ball.x - ball.r < 0){ ball.x = ball.r; ball.vx = Math.abs(ball.vx)*0.95; ball.spin = -ball.spin; }
+    if(ball.x + ball.r > W){ ball.x = W - ball.r; ball.vx = -Math.abs(ball.vx)*0.95; ball.spin = -ball.spin; }
+    if(ball.y - ball.r < 0){ ball.y = ball.r; ball.vy = Math.abs(ball.vy)*0.95; ball.spin = -ball.spin; }
+    if(ball.y + ball.r > H){ // drain = lose a ball
+      loseBall();
     }
 
-    // enemies move left; light seek to player lane
-    for(const e of enemies){
-      e.x -= (e.spd) * dt;
-      if(Math.abs((e.y)-(player.y))>1) e.y += Math.sign(player.y - e.y) * 20 * dt;
-
-      if(e.hurtCD>0) e.hurtCD -= dt;
-
-      // contact damage
-      if(rectHit(player,e) && e.hurtCD<=0){
-        player.hp = Math.max(0, player.hp - (e.type==='runner' ? 10 : 8));
-        e.hurtCD = 0.5;
-        combo = 1; comboTimer = 0; // getting hit breaks combo
-        if(player.hp===0){
-          dead=true;
-          document.getElementById('finalStats').textContent =
-            `Distance: ${Math.floor(distance)} m   •   Kills: ${kills}   •   Max Combo: x${maxComboSeen}`;
-          overlay.style.display='flex';
+    // Bumper collisions (circle-circle)
+    let allDown = true;
+    for(const b of bumpers){
+      if(!b.alive) continue;
+      allDown = false;
+      const d2 = dist2(ball.x, ball.y, b.x, b.y);
+      const rr = (ball.r + b.r)*(ball.r + b.r);
+      if(d2 < rr){
+        const d = Math.sqrt(d2) || 1;
+        const nx = (ball.x - b.x)/d;
+        const ny = (ball.y - b.y)/d;
+        // Separate
+        const overlap = (ball.r + b.r) - d;
+        ball.x += nx * overlap;
+        ball.y += ny * overlap;
+        // Reflect velocity
+        const dot = ball.vx*nx + ball.vy*ny;
+        ball.vx -= 2*dot*nx;
+        ball.vy -= 2*dot*ny;
+        // Add a little boost
+        ball.vx += nx * 80; ball.vy += ny * 80;
+        // Score and possibly “pop” bumper
+        const hitScore = powerTimer>0 ? 150 : 100;
+        score += hitScore * multiplier;
+        // Chance to destroy bumper on power, else just flash
+        if(powerTimer>0 || Math.random()<0.2){
+          b.alive = false;
         }
+        // chance to drop a heal
+        if(Math.random()<0.12){
+          pickups.push({x:b.x-24, y:b.y-24, w:48, h:48, type:'heal', vx: (Math.random()<0.5?-40:40)});
+        }
+        // trail burst
+        trail.push({x:ball.x, y:ball.y, life:0});
       }
     }
 
-    // trim enemies off-screen; respawn
-    for(let i=enemies.length-1;i>=0;i--){
-      if(enemies[i].x < -enemies[i].w){ enemies.splice(i,1); spawnEnemy(W + Math.random()*200); }
+    // If all bumpers down → next stage
+    if(allDown){
+      // small bonus
+      score += 500 * multiplier;
+      nextStage();
     }
 
-    // attack hitbox (small rectangle in front)
-    if(player.atkTime>0){
-      const a = { x: player.face>=0 ? player.x+player.w : player.x-24, y: player.y+20, w:24, h:56 };
-      for(let i=enemies.length-1;i>=0;i--){
-        const e = enemies[i];
-        if(rectHit(a,e)){
-          e.hp -= player.hasSword ? 2 : 1;
-          e.x += player.face>=0 ? 10 : -10; // tiny knock
-          e.hurtCD = 0.2;
-          if(e.hp<=0){
-            enemies.splice(i,1); kills++;
-            // combo handling
-            combo = Math.min(5, combo+1);
-            comboTimer = COMBO_WINDOW;
-            if(combo > maxComboSeen) maxComboSeen = combo;
-            say(`KO! x${combo}`, 400);
-            // respawn a new one a bit ahead
-            spawnEnemy(W + 120 + Math.random()*240);
-            // small chance to drop heal
-            if(Math.random()<0.2) pickups.push({ x:e.x+8, y:e.y+e.h-40, w:48, h:48, type:'heal' });
-          }
-        }
-      }
-    }
+    // Power timer
+    if(powerTimer>0){ powerTimer -= dt; if(powerTimer<=0){ powerTimer=0; multiplier = Math.max(1, multiplier-1); } }
 
-    // pickups move left too
-    for(const p of pickups) p.x -= 80*dt;
+    // Pickups
     for(let i=pickups.length-1;i>=0;i--){
       const p = pickups[i];
-      if(rectHit(player,p)){
+      p.x += (p.vx || 0) * dt;
+      // collect?
+      if(ball.x > p.x && ball.x < p.x+p.w && ball.y > p.y && ball.y < p.y+p.h){
         if(p.type==='heal'){
-          player.hp = Math.min(100, player.hp+30); say('Healed +30', 800);
-        }else{
-          player.hasSword = true; say('Dumpster Sword!', 900);
+          // award points or “ball save”
+          score += 200;
+        } else if(p.type==='sword'){
+          // power mode
+          multiplier = Math.min(4, multiplier+1);
+          powerTimer = 6; // seconds
         }
         pickups.splice(i,1);
-      } else if(p.x < -p.w){
-        pickups.splice(i,1);
-      }
+      } else if(p.x < -p.w || p.x>W+p.w){ pickups.splice(i,1); }
     }
-    if(pickups.length===0 && Math.random()<0.01) spawnPickup();
 
-    // HUD bar
-    hpFill.style.width = Math.max(0, player.hp) + '%';
+    // trail life
+    for(let i=trail.length-1;i>=0;i--){
+      const t = trail[i];
+      t.life += dt;
+      if(t.life>0.4) trail.splice(i,1);
+    }
   }
 
-  // draw
-  ctx.clearRect(0,0,W,H);
-  ctx.imageSmoothingEnabled = false;
+  updateHud();
+}
 
-  // background (tiled scroll; if bg missing, paint bands)
-  if(ASSETS.bg){
-    const sx = Math.floor(scrollX);
-    const w1 = W - sx;
-    ctx.drawImage(ASSETS.bg, sx, 0, w1, H, 0, 0, w1, H);
-    if(sx>0) ctx.drawImage(ASSETS.bg, 0, 0, sx, H, w1, 0, sx, H);
+function loseBall(){
+  lives -= 1;
+  if(lives <= 0){
+    running = false;
+    overTitle.textContent = 'Game Over';
+    overSub.textContent = `Score: ${score}`;
+    overlay.style.display = 'flex';
   } else {
-    ctx.fillStyle = '#444'; ctx.fillRect(0,0,W,H);
-    ctx.fillStyle = '#3a3a3a'; ctx.fillRect(0,H-120,W,4);
-    ctx.fillStyle = '#3a3a3a'; ctx.fillRect(0,H-60,W,4);
+    // quick reset
+    resetBall();
+  }
+}
+
+// ---------- Render ----------
+function draw(){
+  ctx.clearRect(0,0,W,H);
+
+  // Background
+  const bgObj = ASSETS.backgrounds[stageIndex];
+  if(bgObj && bgObj.img){
+    ctx.drawImage(bgObj.img, 0, 0, W, H);
+  } else {
+    ctx.fillStyle='#333'; ctx.fillRect(0,0,W,H);
   }
 
-  // pickups
+  // Pickups
   for(const p of pickups){
     const img = p.type==='heal' ? ASSETS.heal : ASSETS.sword;
     if(img) ctx.drawImage(img, p.x, p.y, p.w, p.h);
-    else { ctx.fillStyle = p.type==='heal' ? '#ff5252' : '#f1c40f'; ctx.fillRect(p.x,p.y,p.w,p.h); }
+    else { ctx.fillStyle = p.type==='heal' ? '#ff6666' : '#ffd166'; ctx.fillRect(p.x,p.y,p.w,p.h); }
   }
 
-  // enemies
-  for(const e of enemies){
-    if(ASSETS.enemy) ctx.drawImage(ASSETS.enemy, e.x, e.y, e.w, e.h);
-    else { ctx.fillStyle = e.type==='runner' ? '#e67e22' : '#8e44ad'; ctx.fillRect(e.x,e.y,e.w,e.h); }
-  }
-
-  // player
-  if(ASSETS.player) ctx.drawImage(ASSETS.player, player.x, player.y, player.w, player.h);
-  else { ctx.fillStyle='#2ecc71'; ctx.fillRect(player.x,player.y,player.w,player.h); }
-
-  // draw the sword when attacking (and you own it)
-  if(player.hasSword && player.atkTime>0 && ASSETS.sword){
-    // position sword near hand & rotate slightly based on facing
-    const sx = player.face>=0 ? player.x + player.w - 4 : player.x - 20;
-    const sy = player.y + 40;
+  // Bumpers (thugs used as bumpers)
+  for(const b of bumpers){
+    if(!b.alive) continue;
+    // bumper circle
     ctx.save();
-    ctx.translate(sx + 12, sy + 12);           // rotate around sword center
-    ctx.rotate((player.face>=0 ? 1 : -1) * 0.4); // ~23° slash angle
-    ctx.translate(-12, -12);
-    ctx.drawImage(ASSETS.sword, 0, 0, 24, 24);  // draw smaller than pickup
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.r+3, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(255,255,255,0.15)';
+    ctx.fill();
     ctx.restore();
+    // draw thug sprite centered over bumper
+    const img = ASSETS.thug;
+    if(img){
+      const w=64, h=96;
+      ctx.drawImage(img, b.x - w/2, b.y - h/2, w, h);
+    } else {
+      ctx.fillStyle='#8e44ad';
+      ctx.fillRect(b.x-24, b.y-36, 48, 72);
+    }
   }
 
-  // slash trail FX
-  for(let i=slashFX.length-1;i>=0;i--){
-    const s = slashFX[i];
-    s.life += (1/60);
-    const t = s.life / s.max;
-    if(t>=1){ slashFX.splice(i,1); continue; }
-    ctx.globalAlpha = 1 - t;
-    ctx.fillStyle = 'rgba(255,255,0,0.6)';
-    const dx = s.face>=0 ? 10 : -10;
-    ctx.fillRect(s.x + dx*t*16, s.y, s.w, s.h);
-    ctx.globalAlpha = 1;
+  // Ball trail
+  ctx.save();
+  for(const t of trail){
+    const a = 1 - t.life/0.4;
+    ctx.globalAlpha = a * 0.6;
+    ctx.fillStyle = powerTimer>0 ? '#ffd166' : '#aaffaa';
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, 8, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Ball (player sprite)
+  if(ASSETS.player){
+    // spin effect: wobble scale slightly
+    const s = 1 + Math.sin(perfNow()*0.01 + ball.spin)*0.06;
+    const w = 64*s, h=96*s;
+    ctx.save();
+    ctx.translate(ball.x, ball.y);
+    ctx.rotate(ball.spin*0.15);
+    ctx.drawImage(ASSETS.player, -w/2, -h/2, w, h);
+    ctx.restore();
+  } else {
+    ctx.fillStyle = '#2ecc71';
+    ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI*2); ctx.fill();
   }
 
-  requestAnimationFrame(loop);
+  // Aim line if launching
+  if(ball.launching && aiming && aimStart){
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(ball.x, ball.y);
+    ctx.lineTo(ball.x + aimVec.x, ball.y + aimVec.y);
+    ctx.stroke();
+  }
 }
 
-// track max combo for end screen
-let maxComboSeen = 1;
+let last=0;
+function perfNow(){ return performance.now ? performance.now() : Date.now(); }
+function loop(ts){
+  const dt = Math.min(0.033, (ts - last)/1000 || 0.016);
+  last = ts;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
 })();
 </script>
 </body>
