@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<title>Dumpster Knights</title>
+<style>
+  * { -webkit-tap-highlight-color: transparent; user-select: none; touch-action: none; }
+  html,body { margin:0; height:100%; background:#000; }
+  #game { display:block; margin:0 auto; image-rendering: pixelated; background:#111; }
+  #hud {
+    position:absolute; left:8px; top:8px; color:#fff; font:14px system-ui; text-shadow:0 2px 4px #000;
+  }
+  #hud .row { display:flex; gap:12px; align-items:center; margin-bottom:6px; }
+  #hpbar { width:160px; height:10px; background:#333; border:1px solid #111; }
+  #hpfill { height:100%; width:100%; background:#2ecc71; }
+  #msg { position:absolute; left:50%; top:12px; transform:translateX(-50%); color:#fff; font:16px system-ui; text-shadow:0 2px 6px #000; }
+  .btn {
+    position:absolute; z-index:10; padding:10px 16px; border:none; border-radius:10px;
+    background:rgba(255,255,255,0.25); color:#000; font:600 16px system-ui;
+  }
+  .btn:active { background:rgba(255,255,255,0.45); }
+  #btnAttack { bottom:16px; left:16px; }
+  #btnRetry  { bottom:16px; left:50%; transform:translateX(-50%); display:none; }
+  #overlay {
+    position:absolute; inset:0; display:none; align-items:center; justify-content:center; flex-direction:column;
+    color:#fff; font:20px system-ui; text-shadow:0 2px 6px #000; background:rgba(0,0,0,0.45);
+  }
+  #overlay .big { font-size:32px; margin-bottom:12px; }
+</style>
+</head>
+<body>
+<canvas id="game" width="800" height="400"></canvas>
+
+<div id="hud">
+  <div class="row">
+    <div id="hpbar"><div id="hpfill"></div></div>
+    <div id="wave">Wave 1</div>
+    <div id="score">0 pts</div>
+  </div>
+</div>
+<div id="msg"></div>
+<button id="btnAttack" class="btn">Attack</button>
+<button id="btnRetry" class="btn">Retry</button>
+<div id="overlay">
+  <div class="big" id="overTitle">You Died</div>
+  <div id="overSub">Tap Retry to continue</div>
+</div>
+
+<script>
+(()=>{
+// ---------- Canvas / UI ----------
+const c = document.getElementById('game');
+const ctx = c.getContext('2d');
+const W = c.width, H = c.height;
+const hpFill = document.getElementById('hpfill');
+const waveEl = document.getElementById('wave');
+const scoreEl= document.getElementById('score');
+const msgEl  = document.getElementById('msg');
+const btnAttack = document.getElementById('btnAttack');
+const btnRetry  = document.getElementById('btnRetry');
+const overlay   = document.getElementById('overlay');
+function say(t, ms=1200){ msgEl.textContent=t; clearTimeout(say._t); say._t=setTimeout(()=>msgEl.textContent="", ms); }
+
+// ---------- Assets (relative paths for GitHub Pages) ----------
+const PATHS = {
+  bg: 'assets/backgrounds/arena_alley_800x400.jpg',
+  player: 'assets/sprites/player/player_idle_1.png',
+  enemy:  'assets/sprites/enemies/street_thug_idle_1.png',
+  heal:   'assets/sprites/items/thermos_health.png',
+  sword:  'assets/sprites/items/dumpster_sword.png'
+};
+function loadImage(src){ return new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=src; }); }
+
+const ASSETS = {};
+
+// ---------- Game State ----------
+const player = { x:120, y:H-96-20, w:64, h:96, speed:150, dest:null, hp:100, inv:{sword:false} };
+let enemies = [];
+let pickups = []; // {x,y,type:'heal'|'sword'}
+let wave = 1, score=0, dead=false;
+let attackCD = 0, attackDur=0;
+
+// ---------- Input: tap-to-move ----------
+c.addEventListener('pointerdown', (e)=>{
+  if(dead) return;
+  const r = c.getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  player.dest = { x: Math.max(0, Math.min(W-player.w, x - player.w/2)),
+                  y: Math.max(0, Math.min(H-player.h, y - player.h/2)) };
+});
+
+// Attack button
+btnAttack.addEventListener('pointerdown', ()=>{
+  if(dead) return;
+  if(attackCD<=0){
+    attackDur = 0.18; // seconds
+    attackCD  = 0.45; // cooldown
+  }
+});
+
+// Retry
+btnRetry.addEventListener('pointerdown', ()=>{
+  // reset state
+  wave=1; score=0; dead=false;
+  player.x=120; player.y=H-96-20; player.hp=100; player.dest=null; player.inv={sword:false};
+  enemies.length=0; pickups.length=0; spawnWave();
+  overlay.style.display='none'; btnRetry.style.display='none'; say('Back in it!',800);
+});
+
+// ---------- Spawning ----------
+function spawnWave(){
+  waveEl.textContent = 'Wave ' + wave;
+  // spawn a few enemies on right side
+  const n = Math.min(3 + wave, 10);
+  for(let i=0;i<n;i++){
+    const ex = W - 100 - Math.random()*120;
+    const ey = H - 96 - 20 - Math.random()*120;
+    enemies.push({ x: ex, y: ey, w:64, h:96, hp: player.inv.sword ? 2 : 3, speed: 60 + Math.random()*20, hitCD: 0 });
+  }
+  // 1 pickup per wave: 50% heal, 50% sword (if not owned)
+  const px = 150 + Math.random()*(W-300);
+  const py = H - 48 - 20 - Math.random()*120;
+  const type = (!player.inv.sword && Math.random()<0.5) ? 'sword' : 'heal';
+  pickups.push({ x:px, y:py, w:48, h:48, type });
+}
+
+// ---------- Collisions ----------
+function rectHit(a,b){ return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y; }
+
+// ---------- Init ----------
+Promise.all([
+  loadImage(PATHS.bg).catch(()=>null),
+  loadImage(PATHS.player).catch(()=>null),
+  loadImage(PATHS.enemy).catch(()=>null),
+  loadImage(PATHS.heal).catch(()=>null),
+  loadImage(PATHS.sword).catch(()=>null),
+]).then(([bg, pl, en, heal, sword])=>{
+  ASSETS.bg=bg; ASSETS.player=pl; ASSETS.enemy=en; ASSETS.heal=heal; ASSETS.sword=sword;
+  spawnWave();
+  requestAnimationFrame(loop);
+}).catch(()=>{
+  // still start with fallbacks
+  spawnWave();
+  requestAnimationFrame(loop);
+});
+
+// ---------- Loop ----------
+let last=0;
+function loop(ts){
+  const dt = Math.min(0.033, (ts-last)/1000 || 0.016);
+  last = ts;
+
+  // update
+  if(!dead){
+    // movement
+    if(player.dest){
+      const dx = player.dest.x - player.x;
+      const dy = player.dest.y - player.y;
+      const d = Math.hypot(dx,dy);
+      const mv = player.speed * dt;
+      if(d <= mv){ player.x = player.dest.x; player.y = player.dest.y; player.dest=null; }
+      else { player.x += dx/d*mv; player.y += dy/d*mv; }
+    }
+
+    // enemies move toward player slowly
+    enemies.forEach(e=>{
+      const dx = (player.x + player.w/2) - (e.x + e.w/2);
+      const dy = (player.y + player.h/2) - (e.y + e.h/2);
+      const d = Math.hypot(dx,dy) || 1;
+      const mv = e.speed * dt;
+      e.x += dx/d * mv * 0.8; // dampen to feel sluggish
+      e.y += dy/d * mv * 0.8;
+      if(e.hitCD>0) e.hitCD -= dt;
+      // damage player on touch with grace period
+      if(rectHit(player,e) && e.hitCD<=0){
+        player.hp = Math.max(0, player.hp - 7);
+        e.hitCD = 0.6;
+        if(player.hp===0){ dead=true; overlay.style.display='flex'; btnRetry.style.display='block'; }
+      }
+    });
+
+    // attack
+    if(attackCD>0) attackCD -= dt;
+    if(attackDur>0){
+      attackDur -= dt;
+      // attack arc = small rectangle in front of player
+      const facingX = player.dest ? Math.sign(player.dest.x - player.x) || 1 : 1;
+      const ax = facingX>=0 ? player.x + player.w : player.x - 24;
+      const ay = player.y + 24;
+      const aRect = { x:ax, y:ay, w:24, h:48 };
+      enemies.forEach((e,i)=>{
+        if(e.hp>0 && rectHit(aRect,e)){
+          e.hp -= player.inv.sword ? 2 : 1;
+          // small knockback
+          const kx = (e.x + e.w/2) - (player.x + player.w/2);
+          const ky = (e.y + e.h/2) - (player.y + player.h/2);
+          const kd = Math.hypot(kx,ky)||1;
+          e.x += (kx/kd)*10; e.y += (ky/kd)*10;
+          if(e.hp<=0){
+            score += 10;
+            // small chance to drop heal
+            if(Math.random()<0.2) pickups.push({ x:e.x+8, y:e.y+e.h-40, w:48, h:48, type:'heal' });
+          }
+        }
+      });
+      // cull dead enemies
+      enemies = enemies.filter(e=>e.hp>0);
+    }
+
+    // pickups
+    pickups.forEach((p,i)=>{
+      if(rectHit(player,p)){
+        if(p.type==='heal'){
+          player.hp = Math.min(100, player.hp + 30);
+          say('Healed +30', 800);
+        } else if(p.type==='sword'){
+          player.inv.sword = true;
+          say('Dumpster sword acquired!', 1000);
+        }
+        pickups.splice(i,1);
+      }
+    });
+
+    // wave complete
+    if(enemies.length===0 && attackDur<=0){
+      wave++; score += 25;
+      spawnWave();
+      say('Wave '+wave, 800);
+    }
+  }
+
+  // draw
+  ctx.clearRect(0,0,W,H);
+  if(ASSETS.bg) ctx.drawImage(ASSETS.bg, 0, 0, W, H);
+  else { ctx.fillStyle='#333'; ctx.fillRect(0,0,W,H); }
+
+  // pickups
+  pickups.forEach(p=>{
+    const img = ASSETS[p.type] || (p.type==='heal'?ASSETS.heal:ASSETS.sword);
+    if(img) ctx.drawImage(img, p.x, p.y, p.w, p.h);
+    else { ctx.fillStyle = p.type==='heal' ? '#ff5252' : '#f1c40f'; ctx.fillRect(p.x,p.y,p.w,p.h); }
+  });
+
+  // enemies
+  enemies.forEach(e=>{
+    if(ASSETS.enemy) ctx.drawImage(ASSETS.enemy, e.x, e.y, e.w, e.h);
+    else { ctx.fillStyle='#8e44ad'; ctx.fillRect(e.x,e.y,e.w,e.h); }
+  });
+
+  // player
+  if(ASSETS.player) ctx.drawImage(ASSETS.player, player.x, player.y, player.w, player.h);
+  else { ctx.fillStyle='#2ecc71'; ctx.fillRect(player.x,player.y,player.w,player.h); }
+
+  // attack flash
+  if(attackDur>0){
+    const facingX = player.dest ? Math.sign(player.dest.x - player.x) || 1 : 1;
+    const ax = facingX>=0 ? player.x + player.w : player.x - 24;
+    const ay = player.y + 24;
+    ctx.fillStyle='rgba(255,255,0,0.4)'; ctx.fillRect(ax,ay,24,48);
+  }
+
+  // HUD
+  hpFill.style.width = Math.max(0, player.hp) + '%';
+  waveEl.textContent = 'Wave ' + wave;
+  scoreEl.textContent= score + ' pts';
+
+  requestAnimationFrame(loop);
+}
+})();
+</script>
+</body>
+</html>
