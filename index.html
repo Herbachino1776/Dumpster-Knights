@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>Endless Street Brawler</title>
+<title>Endless Street Brawler (Double-Ext Assets)</title>
 <style>
   * { -webkit-tap-highlight-color: transparent; user-select: none; touch-action: none; }
   html,body { margin:0; height:100%; background:#000; }
@@ -48,13 +48,13 @@
 
 <script>
 (()=>{
-// ------- ASSET PATHS (must match your repo) -------
+// ------- ASSET PATHS (double extensions to match your files) -------
 const PATHS = {
-  bg:     'assets/backgrounds/arena_junkyard_800x400.jpg',
-  player: 'assets/sprites/player/player_idle_1.png',
-  enemy:  'assets/sprites/enemies/street_thug_idle_1.png',
-  heal:   'assets/sprites/items/thermos_health.png',
-  sword:  'assets/sprites/items/dumpster_sword.png'
+  bg:     'assets/backgrounds/arena_junkyard_800x400.jpg.jpg',
+  player: 'assets/sprites/player/player_idle_1.png.png',
+  enemy:  'assets/sprites/enemies/street_thug_idle_1.png.png',
+  heal:   'assets/sprites/items/thermos_health.png.png',
+  sword:  'assets/sprites/items/dumpster_sword.png.png'
 };
 
 // ------- DOM -------
@@ -109,7 +109,6 @@ function reset(){
   scrollX = 0; distance=0; kills=0; dead=false;
   player.x=120; player.y=H-96-24; player.hp=100; player.dest=null; player.hasSword=false; player.atkCD=0; player.atkTime=0;
   enemies.length=0; pickups.length=0;
-  // spawn initial few
   for(let i=0;i<3;i++) spawnEnemy( W + i*140 );
   spawnPickup();
 }
@@ -198,7 +197,6 @@ function loop(ts){
     // enemies move left; light seek to player lane
     for(const e of enemies){
       e.x -= (e.spd) * dt;
-      // drift toward player's y a bit
       if(Math.abs((e.y)-(player.y))>1) e.y += Math.sign(player.y - e.y) * 20 * dt;
 
       if(e.hurtCD>0) e.hurtCD -= dt;
@@ -250,7 +248,6 @@ function loop(ts){
         pickups.splice(i,1);
       }
     }
-    // keep at least 1 pickup around
     if(pickups.length===0 && Math.random()<0.01) spawnPickup();
 
     // HUD bar
