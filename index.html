@@ -3,183 +3,185 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>Dumpster Knights – Mobile Arena</title>
+<title>Endless Street Brawler</title>
 <style>
   * { -webkit-tap-highlight-color: transparent; user-select: none; touch-action: none; }
   html,body { margin:0; height:100%; background:#000; }
   #game { display:block; margin:0 auto; image-rendering: pixelated; background:#111; }
   #hud {
     position:absolute; left:8px; top:8px; color:#fff; font:14px system-ui; text-shadow:0 2px 4px #000;
+    display:flex; gap:12px; align-items:center;
   }
-  #hud .row { display:flex; gap:12px; align-items:center; margin-bottom:6px; }
   #hpbar { width:160px; height:10px; background:#333; border:1px solid #111; }
   #hpfill { height:100%; width:100%; background:#2ecc71; }
   #msg { position:absolute; left:50%; top:12px; transform:translateX(-50%); color:#fff; font:16px system-ui; text-shadow:0 2px 6px #000; }
   .btn {
-    position:absolute; z-index:10; padding:10px 16px; border:none; border-radius:10px;
+    position:absolute; bottom:16px; left:16px;
+    z-index:10; padding:12px 18px; border:none; border-radius:12px;
     background:rgba(255,255,255,0.25); color:#000; font:600 16px system-ui;
   }
   .btn:active { background:rgba(255,255,255,0.45); }
-  #btnAttack { bottom:16px; left:16px; }
-  #btnRetry  { bottom:16px; left:50%; transform:translateX(-50%); display:none; }
-
   #overlay {
     position:absolute; inset:0; display:none; align-items:center; justify-content:center; flex-direction:column;
     color:#fff; font:22px system-ui; text-shadow:0 2px 6px #000; background:rgba(0,0,0,0.45);
   }
   #overlay .big { font-size:34px; margin-bottom:12px; }
-
-  /* Tiny asset checker */
-  #assetsPanel {
-    position:absolute; right:8px; top:8px; font:12px system-ui; color:#fff; background:rgba(0,0,0,0.45);
-    padding:6px 8px; border-radius:8px; max-width:45vw;
-  }
-  #assetsPanel .ok { color:#9be58c; }
-  #assetsPanel .bad { color:#ff7b7b; }
 </style>
 </head>
 <body>
 <canvas id="game" width="800" height="400"></canvas>
 
 <div id="hud">
-  <div class="row">
-    <div id="hpbar"><div id="hpfill"></div></div>
-    <div id="wave">Wave 1</div>
-    <div id="score">0 pts</div>
-  </div>
+  <div id="hpbar"><div id="hpfill"></div></div>
+  <div id="score">0 m</div>
+  <div id="kills">0 KOs</div>
+  <div id="sword">Fists</div>
 </div>
-<div id="assetsPanel">Loading…</div>
 <div id="msg"></div>
 <button id="btnAttack" class="btn">Attack</button>
-<button id="btnRetry" class="btn">Retry</button>
 
 <div id="overlay">
-  <div class="big" id="overTitle">You Died</div>
-  <div id="overSub">Tap Retry</div>
+  <div class="big">Game Over</div>
+  <div id="finalStats"></div>
+  <button id="retry" class="btn" style="position:static; margin-top:16px;">Retry</button>
 </div>
 
 <script>
 (()=>{
-// ======== CONFIG – these **must match** files in your repo ========
+// ------- ASSET PATHS (must match your repo) -------
 const PATHS = {
-  bg:     'assets/backgrounds/arena_junkyard_800x400', // make sure this exists
-  player: 'assets/sprites/player/player_idle_1',        // 64x96 PNG
-  enemy:  'assets/sprites/enemies/street_thug_idle_1',  // 64x96 PNG
-  heal:   'assets/sprites/items/thermos_health',        // 48x48 PNG
-  sword:  'assets/sprites/items/dumpster_sword'         // 48x48 PNG
+  bg:     'assets/backgrounds/arena_junkyard_800x400.jpg',
+  player: 'assets/sprites/player/player_idle_1.png',
+  enemy:  'assets/sprites/enemies/street_thug_idle_1.png',
+  heal:   'assets/sprites/items/thermos_health.png',
+  sword:  'assets/sprites/items/dumpster_sword.png'
 };
 
-// ======== DOM ========
+// ------- DOM -------
 const c = document.getElementById('game');
 const ctx = c.getContext('2d');
 const W = c.width, H = c.height;
 
 const hpFill = document.getElementById('hpfill');
-const waveEl = document.getElementById('wave');
 const scoreEl= document.getElementById('score');
+const killsEl= document.getElementById('kills');
+const swordEl= document.getElementById('sword');
 const msgEl  = document.getElementById('msg');
+
 const btnAttack = document.getElementById('btnAttack');
-const btnRetry  = document.getElementById('btnRetry');
 const overlay   = document.getElementById('overlay');
-const assetsPanel = document.getElementById('assetsPanel');
+const retryBtn  = document.getElementById('retry');
 
-function say(t, ms=1200){ msgEl.textContent=t; clearTimeout(say._t); say._t=setTimeout(()=>msgEl.textContent="", ms); }
+function say(t, ms=1000){ msgEl.textContent=t; clearTimeout(say._t); say._t=setTimeout(()=>msgEl.textContent="", ms); }
 
-// ======== Asset loader with on-screen diagnostics ========
+// ------- loader -------
 function loadImage(src){
-  return new Promise((res, rej)=>{
-    const img = new Image();
-    img.onload = ()=>res({ok:true, src, img});
-    img.onerror = ()=>rej({ok:false, src});
-    img.src = src; // relative paths for GitHub Pages
-  });
+  return new Promise((res)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=()=>res(null); i.src=src; });
 }
-
 const ASSETS = {};
-Promise.allSettled([
+Promise.all([
   loadImage(PATHS.bg),
   loadImage(PATHS.player),
   loadImage(PATHS.enemy),
   loadImage(PATHS.heal),
   loadImage(PATHS.sword),
-]).then(results=>{
-  // Map results, show diagnostic panel
-  const labels = ['Background','Player','Enemy','Heal','Sword'];
-  const keys   = ['bg','player','enemy','heal','sword'];
-  let html = '<b>Assets</b><br/>';
-  results.forEach((r,i)=>{
-    if(r.status==='fulfilled'){
-      ASSETS[keys[i]] = r.value.img;
-      html += `<div class="ok">✓ ${labels[i]} — ${keys[i]}</div>`;
-    }else{
-      html += `<div class="bad">✗ ${labels[i]} — missing<br><small>${PATHS[keys[i]]}</small></div>`;
-    }
-  });
-  assetsPanel.innerHTML = html;
-
-  // Start game anyway (missing ones get fallback rectangles)
-  init();
-  requestAnimationFrame(loop);
+]).then(([bg,pl,en,heal,sword])=>{
+  ASSETS.bg=bg; ASSETS.player=pl; ASSETS.enemy=en; ASSETS.heal=heal; ASSETS.sword=sword;
+  start();
 });
 
-// ======== Game state ========
-const player = { x:120, y:H-96-20, w:64, h:96, speed:150, dest:null, hp:100, inv:{sword:false} };
-let enemies = [];
-let pickups = [];
-let wave = 1, score=0, dead=false;
-let attackCD = 0, attackDur=0;
+// ------- GAME STATE -------
+let scrollX = 0;                // background scroll
+let distance = 0;               // meters-ish
+let kills = 0;
+let dead = false;
 
-// ======== Input: tap-to-move + buttons ========
+const player = {
+  x:120, y:H-96-24, w:64, h:96,
+  speed: 180, hp:100, dest:null,
+  hasSword:false, atkCD:0, atkTime:0
+};
+
+const enemies = []; // {x,y,w,h,spd,hp,hurtCD}
+const pickups = []; // {x,y,w,h,type:'heal'|'sword'}
+
+function reset(){
+  scrollX = 0; distance=0; kills=0; dead=false;
+  player.x=120; player.y=H-96-24; player.hp=100; player.dest=null; player.hasSword=false; player.atkCD=0; player.atkTime=0;
+  enemies.length=0; pickups.length=0;
+  // spawn initial few
+  for(let i=0;i<3;i++) spawnEnemy( W + i*140 );
+  spawnPickup();
+}
+
+function start(){
+  reset();
+  requestAnimationFrame(loop);
+}
+
+// ------- Spawning -------
+function spawnEnemy(xpos){
+  const lane = H - 96 - 24 - Math.floor(Math.random()*3)*60; // 3 vertical lanes
+  enemies.push({ x:xpos, y:lane, w:64, h:96, spd: 80 + Math.random()*30, hp: player.hasSword ? 2 : 3, hurtCD:0 });
+}
+function spawnPickup(){
+  const type = (!player.hasSword && Math.random()<0.5) ? 'sword' : 'heal';
+  const y = H - 48 - 24 - Math.floor(Math.random()*3)*60;
+  const x = W + 200 + Math.random()*300;
+  pickups.push({ x, y, w:48, h:48, type });
+}
+
+// ------- Input (tap-to-move) -------
 c.addEventListener('pointerdown', (e)=>{
   if(dead) return;
   const r = c.getBoundingClientRect();
-  const x = e.clientX - r.left, y = e.clientY - r.top;
+  const x = e.clientX - r.left;
+  const y = e.clientY - r.top;
   player.dest = {
     x: Math.max(0, Math.min(W-player.w, x - player.w/2)),
-    y: Math.max(0, Math.min(H-player.h, y - player.h/2))
+    y: clampToLanes(y - player.h/2)
   };
 });
 btnAttack.addEventListener('pointerdown', ()=>{
   if(dead) return;
-  if(attackCD<=0){ attackDur=0.18; attackCD=0.45; }
+  if(player.atkCD<=0){ player.atkTime=0.16; player.atkCD=0.38; }
 });
-btnRetry.addEventListener('pointerdown', ()=>{
-  wave=1; score=0; dead=false;
-  player.x=120; player.y=H-96-20; player.hp=100; player.dest=null; player.inv={sword:false};
-  enemies.length=0; pickups.length=0; spawnWave();
-  overlay.style.display='none'; btnRetry.style.display='none'; say('Back in it!',800);
+retryBtn.addEventListener('pointerdown', ()=>{
+  overlay.style.display='none';
+  reset();
 });
 
-// ======== Setup / Spawning ========
-function init(){ spawnWave(); }
-
-function spawnWave(){
-  waveEl.textContent = 'Wave ' + wave;
-  const n = Math.min(3 + wave, 10);
-  for(let i=0;i<n;i++){
-    const ex = W - 100 - Math.random()*140;
-    const ey = H - 96 - 20 - Math.random()*140;
-    enemies.push({ x:ex, y:ey, w:64, h:96, hp: player.inv.sword? 2 : 3, speed: 60 + Math.random()*20, hitCD:0 });
+// lock Y to lane centers
+function clampToLanes(y){
+  const lanes = [H-96-24, H-96-24-60, H-96-24-120]; // bottom, mid, top
+  let target = lanes[0];
+  let best = Infinity;
+  for(const L of lanes){
+    const d = Math.abs(L - y);
+    if(d<best){ best=d; target=L; }
   }
-  // a pickup per wave: sword (if not owned) or heal
-  const px = 150 + Math.random()*(W-300);
-  const py = H - 48 - 20 - Math.random()*140;
-  const type = (!player.inv.sword && Math.random()<0.5) ? 'sword' : 'heal';
-  pickups.push({ x:px, y:py, w:48, h:48, type });
+  return target;
 }
 
-// ======== Helpers ========
+// ------- Helpers -------
 function rectHit(a,b){ return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y; }
 
-// ======== Main loop ========
+// ------- LOOP -------
 let last=0;
 function loop(ts){
   const dt = Math.min(0.033, (ts-last)/1000 || 0.016);
   last = ts;
 
-  // Update
+  // update
   if(!dead){
-    // Move player toward dest
+    // scroll street & accumulate distance
+    scrollX = (scrollX + 80*dt) % W; // background speed
+    distance += 0.08 * (80*dt);      // rough meters
+    scoreEl.textContent = Math.floor(distance).toString() + ' m';
+    killsEl.textContent = kills + ' KOs';
+    swordEl.textContent = player.hasSword ? 'Sword' : 'Fists';
+
+    // move player toward dest
     if(player.dest){
       const dx = player.dest.x - player.x;
       const dy = player.dest.y - player.y;
@@ -189,97 +191,112 @@ function loop(ts){
       else { player.x += dx/d*mv; player.y += dy/d*mv; }
     }
 
-    // Enemies track player (slow crawl)
-    enemies.forEach(e=>{
-      const dx = (player.x + player.w/2) - (e.x + e.w/2);
-      const dy = (player.y + player.h/2) - (e.y + e.h/2);
-      const d = Math.hypot(dx,dy) || 1;
-      const mv = e.speed * dt;
-      e.x += dx/d * mv * 0.8;
-      e.y += dy/d * mv * 0.8;
-      if(e.hitCD>0) e.hitCD -= dt;
-      if(rectHit(player,e) && e.hitCD<=0){
-        player.hp = Math.max(0, player.hp - 7);
-        e.hitCD = 0.6;
-        if(player.hp===0){ dead=true; overlay.style.display='flex'; btnRetry.style.display='block'; }
-      }
-    });
+    // attack timers
+    if(player.atkCD>0)  player.atkCD -= dt;
+    if(player.atkTime>0) player.atkTime -= dt;
 
-    // Attack
-    if(attackCD>0) attackCD -= dt;
-    if(attackDur>0){
-      attackDur -= dt;
-      const facingX = player.dest ? Math.sign(player.dest.x - player.x) || 1 : 1;
-      const ax = facingX>=0 ? player.x + player.w : player.x - 24;
-      const ay = player.y + 24;
-      const aRect = { x:ax, y:ay, w:24, h:48 };
-      enemies.forEach(e=>{
-        if(e.hp>0 && rectHit(aRect,e)){
-          e.hp -= player.inv.sword ? 2 : 1;
-          // knockback
-          const kx = (e.x + e.w/2) - (player.x + player.w/2);
-          const ky = (e.y + e.h/2) - (player.y + player.h/2);
-          const kd = Math.hypot(kx,ky)||1;
-          e.x += (kx/kd)*10; e.y += (ky/kd)*10;
-          if(e.hp<=0){
-            score += 10;
-            if(Math.random()<0.2) pickups.push({ x:e.x+8, y:e.y+e.h-40, w:48, h:48, type:'heal' });
-          }
+    // enemies move left; light seek to player lane
+    for(const e of enemies){
+      e.x -= (e.spd) * dt;
+      // drift toward player's y a bit
+      if(Math.abs((e.y)-(player.y))>1) e.y += Math.sign(player.y - e.y) * 20 * dt;
+
+      if(e.hurtCD>0) e.hurtCD -= dt;
+
+      // contact damage
+      if(rectHit(player,e) && e.hurtCD<=0){
+        player.hp = Math.max(0, player.hp - 8);
+        e.hurtCD = 0.5;
+        if(player.hp===0){
+          dead=true;
+          document.getElementById('finalStats').textContent =
+            `Distance: ${Math.floor(distance)} m   •   Kills: ${kills}`;
+          overlay.style.display='flex';
         }
-      });
-      enemies = enemies.filter(e=>e.hp>0);
+      }
     }
 
-    // Pickups
+    // trim enemies off-screen; respawn
+    for(let i=enemies.length-1;i>=0;i--){
+      if(enemies[i].x < -enemies[i].w){ enemies.splice(i,1); spawnEnemy(W + Math.random()*200); }
+    }
+
+    // attack hitbox (small rectangle in front)
+    if(player.atkTime>0){
+      const facing = player.dest ? Math.sign(player.dest.x - player.x) || 1 : 1;
+      const a = { x: facing>=0 ? player.x+player.w : player.x-24, y: player.y+20, w:24, h:56 };
+      for(let i=enemies.length-1;i>=0;i--){
+        const e = enemies[i];
+        if(rectHit(a,e)){
+          e.hp -= player.hasSword ? 2 : 1;
+          e.x += facing>=0 ? 8 : -8; // tiny knock
+          if(e.hp<=0){ enemies.splice(i,1); kills++; spawnEnemy(W + 120 + Math.random()*240); }
+        }
+      }
+    }
+
+    // pickups move left too
+    for(const p of pickups) p.x -= 80*dt;
     for(let i=pickups.length-1;i>=0;i--){
       const p = pickups[i];
       if(rectHit(player,p)){
-        if(p.type==='heal'){ player.hp = Math.min(100, player.hp+30); say('Healed +30', 800); }
-        else if(p.type==='sword'){ player.inv.sword = true; say('Dumpster sword!', 900); }
+        if(p.type==='heal'){
+          player.hp = Math.min(100, player.hp+30); say('Healed +30', 800);
+        }else{
+          player.hasSword = true; say('Dumpster Sword!', 900);
+        }
+        pickups.splice(i,1);
+      } else if(p.x < -p.w){
         pickups.splice(i,1);
       }
     }
+    // keep at least 1 pickup around
+    if(pickups.length===0 && Math.random()<0.01) spawnPickup();
 
-    // Next wave
-    if(enemies.length===0 && attackDur<=0){
-      wave++; score += 25; spawnWave(); say('Wave '+wave, 800);
-    }
+    // HUD bar
+    hpFill.style.width = Math.max(0, player.hp) + '%';
   }
 
-  // Draw
+  // draw
   ctx.clearRect(0,0,W,H);
-  if(ASSETS.bg) ctx.drawImage(ASSETS.bg, 0, 0, W, H);
-  else { ctx.fillStyle='#444'; ctx.fillRect(0,0,W,H); }
+  ctx.imageSmoothingEnabled = false;
 
-  // Pickups
-  pickups.forEach(p=>{
+  // background (tiled scroll; if bg missing, paint bands)
+  if(ASSETS.bg){
+    const sx = Math.floor(scrollX);
+    const w1 = W - sx;
+    ctx.drawImage(ASSETS.bg, sx, 0, w1, H, 0, 0, w1, H);
+    if(sx>0) ctx.drawImage(ASSETS.bg, 0, 0, sx, H, w1, 0, sx, H);
+  } else {
+    ctx.fillStyle = '#444'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = '#3a3a3a'; ctx.fillRect(0,H-120,W,4);
+    ctx.fillStyle = '#3a3a3a'; ctx.fillRect(0,H-60,W,4);
+  }
+
+  // pickups
+  for(const p of pickups){
     const img = p.type==='heal' ? ASSETS.heal : ASSETS.sword;
     if(img) ctx.drawImage(img, p.x, p.y, p.w, p.h);
     else { ctx.fillStyle = p.type==='heal' ? '#ff5252' : '#f1c40f'; ctx.fillRect(p.x,p.y,p.w,p.h); }
-  });
+  }
 
-  // Enemies
-  enemies.forEach(e=>{
+  // enemies
+  for(const e of enemies){
     if(ASSETS.enemy) ctx.drawImage(ASSETS.enemy, e.x, e.y, e.w, e.h);
     else { ctx.fillStyle='#8e44ad'; ctx.fillRect(e.x,e.y,e.w,e.h); }
-  });
+  }
 
-  // Player
+  // player
   if(ASSETS.player) ctx.drawImage(ASSETS.player, player.x, player.y, player.w, player.h);
   else { ctx.fillStyle='#2ecc71'; ctx.fillRect(player.x,player.y,player.w,player.h); }
 
-  // Attack flash
-  if(attackDur>0){
-    const facingX = player.dest ? Math.sign(player.dest.x - player.x) || 1 : 1;
-    const ax = facingX>=0 ? player.x + player.w : player.x - 24;
-    const ay = player.y + 24;
-    ctx.fillStyle='rgba(255,255,0,0.4)'; ctx.fillRect(ax,ay,24,48);
+  // attack flash
+  if(player.atkTime>0){
+    const facing = player.dest ? Math.sign(player.dest.x - player.x) || 1 : 1;
+    const ax = facing>=0 ? player.x + player.w : player.x - 24;
+    const ay = player.y + 20;
+    ctx.fillStyle='rgba(255,255,0,0.4)'; ctx.fillRect(ax, ay, 24, 56);
   }
-
-  // HUD
-  hpFill.style.width = Math.max(0, player.hp) + '%';
-  waveEl.textContent = 'Wave ' + wave;
-  scoreEl.textContent= score + ' pts';
 
   requestAnimationFrame(loop);
 }
