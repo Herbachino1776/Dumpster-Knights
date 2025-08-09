@@ -3,18 +3,21 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>Endless Street Brawler (Double-Ext Assets)</title>
+<title>Endless Street Brawler+</title>
 <style>
   * { -webkit-tap-highlight-color: transparent; user-select: none; touch-action: none; }
   html,body { margin:0; height:100%; background:#000; }
   #game { display:block; margin:0 auto; image-rendering: pixelated; background:#111; }
   #hud {
     position:absolute; left:8px; top:8px; color:#fff; font:14px system-ui; text-shadow:0 2px 4px #000;
-    display:flex; gap:12px; align-items:center;
+    display:flex; gap:12px; align-items:center; flex-wrap:wrap;
   }
   #hpbar { width:160px; height:10px; background:#333; border:1px solid #111; }
   #hpfill { height:100%; width:100%; background:#2ecc71; }
   #msg { position:absolute; left:50%; top:12px; transform:translateX(-50%); color:#fff; font:16px system-ui; text-shadow:0 2px 6px #000; }
+  .pill {
+    padding:2px 6px; border-radius:6px; background:rgba(0,0,0,.4); border:1px solid rgba(255,255,255,.15);
+  }
   .btn {
     position:absolute; bottom:16px; left:16px;
     z-index:10; padding:12px 18px; border:none; border-radius:12px;
@@ -33,9 +36,10 @@
 
 <div id="hud">
   <div id="hpbar"><div id="hpfill"></div></div>
-  <div id="score">0 m</div>
-  <div id="kills">0 KOs</div>
-  <div id="sword">Fists</div>
+  <div id="score" class="pill">0 m</div>
+  <div id="kills" class="pill">0 KOs</div>
+  <div id="sword" class="pill">Fists</div>
+  <div id="combo" class="pill">Combo x1</div>
 </div>
 <div id="msg"></div>
 <button id="btnAttack" class="btn">Attack</button>
@@ -48,13 +52,13 @@
 
 <script>
 (()=>{
-// ------- ASSET PATHS (double extensions to match your files) -------
+// ------- ASSET PATHS (no double extensions) -------
 const PATHS = {
-  bg:     'assets/backgrounds/arena_junkyard_800x400.jpg.jpg',
-  player: 'assets/sprites/player/player_idle_1.png.png',
-  enemy:  'assets/sprites/enemies/street_thug_idle_1.png.png',
-  heal:   'assets/sprites/items/thermos_health.png.png',
-  sword:  'assets/sprites/items/dumpster_sword.png.png'
+  bg:     'assets/backgrounds/arena_junkyard_800x400.jpg',
+  player: 'assets/sprites/player/player_idle_1.png',
+  enemy:  'assets/sprites/enemies/street_thug_idle_1.png',
+  heal:   'assets/sprites/items/thermos_health.png',
+  sword:  'assets/sprites/items/dumpster_sword.png'
 };
 
 // ------- DOM -------
@@ -66,6 +70,7 @@ const hpFill = document.getElementById('hpfill');
 const scoreEl= document.getElementById('score');
 const killsEl= document.getElementById('kills');
 const swordEl= document.getElementById('sword');
+const comboEl= document.getElementById('combo');
 const msgEl  = document.getElementById('msg');
 
 const btnAttack = document.getElementById('btnAttack');
@@ -99,16 +104,23 @@ let dead = false;
 const player = {
   x:120, y:H-96-24, w:64, h:96,
   speed: 180, hp:100, dest:null,
-  hasSword:false, atkCD:0, atkTime:0
+  hasSword:false, atkCD:0, atkTime:0, face:1
 };
 
-const enemies = []; // {x,y,w,h,spd,hp,hurtCD}
+const enemies = []; // {x,y,w,h,spd,hp,hurtCD,type:'thug'|'runner'}
 const pickups = []; // {x,y,w,h,type:'heal'|'sword'}
+const slashFX  = []; // quick fading slashes
+
+// Combo system
+let combo = 1;
+let comboTimer = 0; // seconds left to chain
+const COMBO_WINDOW = 3; // seconds
 
 function reset(){
   scrollX = 0; distance=0; kills=0; dead=false;
-  player.x=120; player.y=H-96-24; player.hp=100; player.dest=null; player.hasSword=false; player.atkCD=0; player.atkTime=0;
-  enemies.length=0; pickups.length=0;
+  combo=1; comboTimer=0;
+  player.x=120; player.y=H-96-24; player.hp=100; player.dest=null; player.hasSword=false; player.atkCD=0; player.atkTime=0; player.face=1;
+  enemies.length=0; pickups.length=0; slashFX.length=0;
   for(let i=0;i<3;i++) spawnEnemy( W + i*140 );
   spawnPickup();
 }
@@ -121,7 +133,15 @@ function start(){
 // ------- Spawning -------
 function spawnEnemy(xpos){
   const lane = H - 96 - 24 - Math.floor(Math.random()*3)*60; // 3 vertical lanes
-  enemies.push({ x:xpos, y:lane, w:64, h:96, spd: 80 + Math.random()*30, hp: player.hasSword ? 2 : 3, hurtCD:0 });
+  // 20% chance runner: faster, 2 HP; else thug: normal speed, 3 HP
+  const runner = Math.random() < 0.2;
+  enemies.push({
+    x:xpos, y:lane, w:64, h:96,
+    spd: runner ? 120 + Math.random()*40 : 80 + Math.random()*30,
+    hp: runner ? 2 : 3,
+    hurtCD:0,
+    type: runner ? 'runner' : 'thug'
+  });
 }
 function spawnPickup(){
   const type = (!player.hasSword && Math.random()<0.5) ? 'sword' : 'heal';
@@ -140,10 +160,12 @@ c.addEventListener('pointerdown', (e)=>{
     x: Math.max(0, Math.min(W-player.w, x - player.w/2)),
     y: clampToLanes(y - player.h/2)
   };
+  const newFace = Math.sign((player.dest.x ?? player.x) - player.x) || 1;
+  player.face = newFace;
 });
 btnAttack.addEventListener('pointerdown', ()=>{
   if(dead) return;
-  if(player.atkCD<=0){ player.atkTime=0.16; player.atkCD=0.38; }
+  if(player.atkCD<=0){ player.atkTime=0.16; player.atkCD=0.38; spawnSlash(); }
 });
 retryBtn.addEventListener('pointerdown', ()=>{
   overlay.style.display='none';
@@ -165,6 +187,13 @@ function clampToLanes(y){
 // ------- Helpers -------
 function rectHit(a,b){ return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y; }
 
+// Slash visual
+function spawnSlash(){
+  const ax = player.face>=0 ? player.x + player.w : player.x - 24;
+  const ay = player.y + 28;
+  slashFX.push({ x:ax, y:ay, w:28, h:40, life:0, max:0.15, face:player.face });
+}
+
 // ------- LOOP -------
 let last=0;
 function loop(ts){
@@ -179,6 +208,7 @@ function loop(ts){
     scoreEl.textContent = Math.floor(distance).toString() + ' m';
     killsEl.textContent = kills + ' KOs';
     swordEl.textContent = player.hasSword ? 'Sword' : 'Fists';
+    comboEl.textContent = `Combo x${combo}`;
 
     // move player toward dest
     if(player.dest){
@@ -194,6 +224,12 @@ function loop(ts){
     if(player.atkCD>0)  player.atkCD -= dt;
     if(player.atkTime>0) player.atkTime -= dt;
 
+    // combo timer decay
+    if(combo>1){
+      comboTimer -= dt;
+      if(comboTimer<=0){ combo=1; comboTimer=0; }
+    }
+
     // enemies move left; light seek to player lane
     for(const e of enemies){
       e.x -= (e.spd) * dt;
@@ -203,12 +239,13 @@ function loop(ts){
 
       // contact damage
       if(rectHit(player,e) && e.hurtCD<=0){
-        player.hp = Math.max(0, player.hp - 8);
+        player.hp = Math.max(0, player.hp - (e.type==='runner' ? 10 : 8));
         e.hurtCD = 0.5;
+        combo = 1; comboTimer = 0; // getting hit breaks combo
         if(player.hp===0){
           dead=true;
           document.getElementById('finalStats').textContent =
-            `Distance: ${Math.floor(distance)} m   •   Kills: ${kills}`;
+            `Distance: ${Math.floor(distance)} m   •   Kills: ${kills}   •   Max Combo: x${maxComboSeen}`;
           overlay.style.display='flex';
         }
       }
@@ -221,14 +258,25 @@ function loop(ts){
 
     // attack hitbox (small rectangle in front)
     if(player.atkTime>0){
-      const facing = player.dest ? Math.sign(player.dest.x - player.x) || 1 : 1;
-      const a = { x: facing>=0 ? player.x+player.w : player.x-24, y: player.y+20, w:24, h:56 };
+      const a = { x: player.face>=0 ? player.x+player.w : player.x-24, y: player.y+20, w:24, h:56 };
       for(let i=enemies.length-1;i>=0;i--){
         const e = enemies[i];
         if(rectHit(a,e)){
           e.hp -= player.hasSword ? 2 : 1;
-          e.x += facing>=0 ? 8 : -8; // tiny knock
-          if(e.hp<=0){ enemies.splice(i,1); kills++; spawnEnemy(W + 120 + Math.random()*240); }
+          e.x += player.face>=0 ? 10 : -10; // tiny knock
+          e.hurtCD = 0.2;
+          if(e.hp<=0){
+            enemies.splice(i,1); kills++;
+            // combo handling
+            combo = Math.min(5, combo+1);
+            comboTimer = COMBO_WINDOW;
+            if(combo > maxComboSeen) maxComboSeen = combo;
+            say(`KO! x${combo}`, 400);
+            // respawn a new one a bit ahead
+            spawnEnemy(W + 120 + Math.random()*240);
+            // small chance to drop heal
+            if(Math.random()<0.2) pickups.push({ x:e.x+8, y:e.y+e.h-40, w:48, h:48, type:'heal' });
+          }
         }
       }
     }
@@ -280,23 +328,44 @@ function loop(ts){
   // enemies
   for(const e of enemies){
     if(ASSETS.enemy) ctx.drawImage(ASSETS.enemy, e.x, e.y, e.w, e.h);
-    else { ctx.fillStyle='#8e44ad'; ctx.fillRect(e.x,e.y,e.w,e.h); }
+    else { ctx.fillStyle = e.type==='runner' ? '#e67e22' : '#8e44ad'; ctx.fillRect(e.x,e.y,e.w,e.h); }
   }
 
   // player
   if(ASSETS.player) ctx.drawImage(ASSETS.player, player.x, player.y, player.w, player.h);
   else { ctx.fillStyle='#2ecc71'; ctx.fillRect(player.x,player.y,player.w,player.h); }
 
-  // attack flash
-  if(player.atkTime>0){
-    const facing = player.dest ? Math.sign(player.dest.x - player.x) || 1 : 1;
-    const ax = facing>=0 ? player.x + player.w : player.x - 24;
-    const ay = player.y + 20;
-    ctx.fillStyle='rgba(255,255,0,0.4)'; ctx.fillRect(ax, ay, 24, 56);
+  // draw the sword when attacking (and you own it)
+  if(player.hasSword && player.atkTime>0 && ASSETS.sword){
+    // position sword near hand & rotate slightly based on facing
+    const sx = player.face>=0 ? player.x + player.w - 4 : player.x - 20;
+    const sy = player.y + 40;
+    ctx.save();
+    ctx.translate(sx + 12, sy + 12);           // rotate around sword center
+    ctx.rotate((player.face>=0 ? 1 : -1) * 0.4); // ~23° slash angle
+    ctx.translate(-12, -12);
+    ctx.drawImage(ASSETS.sword, 0, 0, 24, 24);  // draw smaller than pickup
+    ctx.restore();
+  }
+
+  // slash trail FX
+  for(let i=slashFX.length-1;i>=0;i--){
+    const s = slashFX[i];
+    s.life += (1/60);
+    const t = s.life / s.max;
+    if(t>=1){ slashFX.splice(i,1); continue; }
+    ctx.globalAlpha = 1 - t;
+    ctx.fillStyle = 'rgba(255,255,0,0.6)';
+    const dx = s.face>=0 ? 10 : -10;
+    ctx.fillRect(s.x + dx*t*16, s.y, s.w, s.h);
+    ctx.globalAlpha = 1;
   }
 
   requestAnimationFrame(loop);
 }
+
+// track max combo for end screen
+let maxComboSeen = 1;
 })();
 </script>
 </body>
