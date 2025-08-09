@@ -3,443 +3,467 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>Dumpster Pinball Rampage</title>
+<title>Drug Wizard of the Junkyard — v1.0</title>
 <style>
   * { -webkit-tap-highlight-color: transparent; user-select:none; touch-action:none; }
   html,body { margin:0; height:100%; background:#000; }
   #game { display:block; margin:0 auto; background:#111; image-rendering: pixelated; }
   #hud {
-    position:absolute; left:8px; top:8px; color:#fff; font:14px system-ui; text-shadow:0 2px 4px #000;
-    display:flex; gap:12px; align-items:center; flex-wrap:wrap;
+    position:absolute; left:8px; top:8px; right:8px;
+    display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+    font:14px system-ui; color:#fff; text-shadow:0 2px 6px #000;
   }
-  .pill { padding:2px 8px; border-radius:8px; background:rgba(0,0,0,.45); border:1px solid rgba(255,255,255,.18); }
+  .pill { padding:3px 8px; border-radius:8px; background:rgba(0,0,0,.5); border:1px solid rgba(255,255,255,.15); }
+  #msg {
+    position:absolute; left:50%; top:12px; transform:translateX(-50%);
+    color:#fff; font:16px/1.3 system-ui; text-shadow:0 2px 6px #000; pointer-events:none;
+  }
+  #buttons { position:absolute; bottom:12px; left:12px; right:12px; display:flex; gap:10px; justify-content:space-between; }
+  .btn {
+    flex:1; padding:12px 14px; border:none; border-radius:12px;
+    background:rgba(255,255,255,.25); color:#000; font:600 16px system-ui; box-shadow:0 2px 0 rgba(0,0,0,.25);
+  }
+  .btn:active { background:rgba(255,255,255,.45); }
+  #dialog {
+    position:absolute; left:50%; bottom:86px; transform:translateX(-50%);
+    width:min(94vw, 720px); background:rgba(10,10,10,.75); color:#fff; border:1px solid #333; border-radius:12px;
+    padding:10px 12px; font:14px/1.4 system-ui; display:none;
+  }
+  #dialog .name { font-weight:700; color:#c9f; }
+  #dialog .choices { margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; }
+  .choice {
+    background:#222; border:1px solid #444; color:#eee; padding:8px 10px; border-radius:8px;
+  }
+  .choice:active { background:#333; }
   #overlay {
     position:absolute; inset:0; display:none; align-items:center; justify-content:center; flex-direction:column;
     color:#fff; text-shadow:0 2px 6px #000; background:rgba(0,0,0,.55); font:20px system-ui;
   }
-  #overlay .big { font-size:36px; margin-bottom:10px; }
-  .btn {
-    position:absolute; z-index:10; padding:10px 16px; border:none; border-radius:10px;
-    background:rgba(255,255,255,0.25); color:#000; font:600 16px system-ui;
-  }
-  .btn:active { background:rgba(255,255,255,0.45); }
-  #nudgeL { bottom:16px; left:16px; }
-  #nudgeR { bottom:16px; left:120px; }
+  #overlay .big { font-size:34px; margin-bottom:10px; }
+  /* tiny asset checker */
+  #assets { position:absolute; right:8px; bottom:8px; font:11px system-ui; color:#fff; background:rgba(0,0,0,.45); padding:5px 7px; border-radius:8px; }
+  #assets .ok{color:#9be58c} .bad{color:#ff8c8c}
 </style>
 </head>
 <body>
 <canvas id="game" width="800" height="400"></canvas>
 
 <div id="hud">
-  <div id="score" class="pill">Score 0</div>
-  <div id="lives" class="pill">Balls 3</div>
-  <div id="mult"  class="pill">x1</div>
-  <div id="stage" class="pill">Junkyard</div>
+  <div id="loc"  class="pill">Junkyard</div>
+  <div id="hp"   class="pill">HP 100</div>
+  <div id="inv"  class="pill">Inv: —</div>
+  <div id="goal" class="pill">Goal: Speak to Mechanist</div>
+</div>
+<div id="msg"></div>
+
+<div id="buttons">
+  <button id="btnTalk" class="btn">Talk</button>
+  <button id="btnCast" class="btn">Cast</button>
+  <button id="btnBag"  class="btn">Bag</button>
 </div>
 
-<button id="nudgeL" class="btn">Nudge ◀</button>
-<button id="nudgeR" class="btn">Nudge ▶</button>
+<div id="dialog">
+  <div class="line"><span class="name" id="dlgName">NPC</span>: <span id="dlgText">…</span></div>
+  <div class="choices" id="dlgChoices"></div>
+</div>
 
 <div id="overlay">
-  <div class="big" id="overTitle">Game Over</div>
-  <div id="overSub">Score: 0</div>
-  <button id="retry" class="btn" style="position:static; margin-top:12px;">Retry</button>
+  <div class="big" id="overTitle">You Perished</div>
+  <div id="overSub">Tap Retry</div>
+  <button id="retry" class="btn" style="width:200px; margin-top:12px;">Retry</button>
 </div>
+
+<div id="assets">Loading…</div>
 
 <script>
 (()=>{
-// ---------- ASSET PATHS (must match your repo) ----------
+// --------- ASSETS (match your repo) ----------
 const PATHS = {
   backgrounds: [
-    {src: 'assets/backgrounds/arena_junkyard_800x400.jpg', label: 'Junkyard'},
-    {src: 'assets/backgrounds/arena_dark_alley_800x400.jpg', label: 'Dark Alley'},
-    {src: 'assets/backgrounds/arena_fortress_800x400.jpg', label: 'Scrap Fortress'}
+    {src:'assets/backgrounds/arena_junkyard_800x400.jpg', label:'Junkyard'},
+    {src:'assets/backgrounds/arena_dark_alley_800x400.jpg', label:'Dark Alley'},
+    {src:'assets/backgrounds/arena_fortress_800x400.jpg', label:'Scrap Fortress'}
   ],
-  player: 'assets/sprites/player/player_idle_1.png',
-  thug:   'assets/sprites/enemies/street_thug_idle_1.png',
-  heal:   'assets/sprites/items/thermos_health.png',
-  sword:  'assets/sprites/items/dumpster_sword.png'
+  player:'assets/sprites/player/player_idle_1.png',
+  thug:  'assets/sprites/enemies/street_thug_idle_1.png',
+  thermos:'assets/sprites/items/thermos_health.png',
+  sword: 'assets/sprites/items/dumpster_sword.png'
 };
 
-// ---------- DOM ----------
-const c = document.getElementById('game');
-const ctx = c.getContext('2d');
+// --------- DOM ----------
+const c = document.getElementById('game'), ctx = c.getContext('2d');
 const W = c.width, H = c.height;
-ctx.imageSmoothingEnabled = false;
-
-const scoreEl = document.getElementById('score');
-const livesEl = document.getElementById('lives');
-const multEl  = document.getElementById('mult');
-const stageEl = document.getElementById('stage');
+const locEl = document.getElementById('loc');
+const hpEl  = document.getElementById('hp');
+const invEl = document.getElementById('inv');
+const goalEl= document.getElementById('goal');
+const msgEl = document.getElementById('msg');
+const dialog= document.getElementById('dialog');
+const dlgName = document.getElementById('dlgName');
+const dlgText = document.getElementById('dlgText');
+const dlgChoices = document.getElementById('dlgChoices');
+const btnTalk = document.getElementById('btnTalk');
+const btnCast = document.getElementById('btnCast');
+const btnBag  = document.getElementById('btnBag');
 const overlay = document.getElementById('overlay');
-const overTitle = document.getElementById('overTitle');
-const overSub   = document.getElementById('overSub');
-const retryBtn  = document.getElementById('retry');
-const nudgeL    = document.getElementById('nudgeL');
-const nudgeR    = document.getElementById('nudgeR');
+const retryBtn= document.getElementById('retry');
+const assetsBox = document.getElementById('assets');
 
-// ---------- Loader ----------
-function loadImage(src){
-  return new Promise(res=>{
-    const img = new Image();
-    img.onload = ()=>res(img);
-    img.onerror= ()=>res(null);
-    img.src = src;
-  });
-}
-
-const ASSETS = { backgrounds: [] };
+// --------- LOAD ----------
+function loadImage(src){ return new Promise(res=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=()=>res(null); i.src=src; }); }
+const ASSETS = { backgrounds:[] };
 Promise.all([
   ...PATHS.backgrounds.map(b=>loadImage(b.src)),
   loadImage(PATHS.player),
   loadImage(PATHS.thug),
-  loadImage(PATHS.heal),
-  loadImage(PATHS.sword)
+  loadImage(PATHS.thermos),
+  loadImage(PATHS.sword),
 ]).then(imgs=>{
-  const bgImgs = imgs.slice(0, PATHS.backgrounds.length);
-  ASSETS.backgrounds = bgImgs.map((img,i)=>({img, label: PATHS.backgrounds[i].label}));
-  ASSETS.player = imgs[PATHS.backgrounds.length+0];
-  ASSETS.thug   = imgs[PATHS.backgrounds.length+1];
-  ASSETS.heal   = imgs[PATHS.backgrounds.length+2];
-  ASSETS.sword  = imgs[PATHS.backgrounds.length+3];
-  init();
-  requestAnimationFrame(loop);
+  const bgs = imgs.slice(0,PATHS.backgrounds.length);
+  ASSETS.backgrounds = bgs.map((img,i)=>({img,label:PATHS.backgrounds[i].label,ok:!!img,src:PATHS.backgrounds[i].src}));
+  ASSETS.player=imgs[PATHS.backgrounds.length+0];
+  ASSETS.thug  =imgs[PATHS.backgrounds.length+1];
+  ASSETS.thermos=imgs[PATHS.backgrounds.length+2];
+  ASSETS.sword =imgs[PATHS.backgrounds.length+3];
+  // asset report
+  let report = `<b>Assets</b><br/>`;
+  ASSETS.backgrounds.forEach(b=> report += `<div class="${b.ok?'ok':'bad'}">${b.ok?'✓':'✗'} ${b.label}</div>`);
+  report += `<div class="${ASSETS.player?'ok':'bad'}">${ASSETS.player?'✓':'✗'} player</div>`;
+  report += `<div class="${ASSETS.thug?'ok':'bad'}">${ASSETS.thug?'✓':'✗'} thug</div>`;
+  report += `<div class="${ASSETS.thermos?'ok':'bad'}">${ASSETS.thermos?'✓':'✗'} thermos</div>`;
+  report += `<div class="${ASSETS.sword?'ok':'bad'}">${ASSETS.sword?'✓':'✗'} sword</div>`;
+  assetsBox.innerHTML = report;
+  startGame();
 });
 
-// ---------- Game State ----------
-let stageIndex = 0;
-let score = 0;
-let lives = 3;
-let multiplier = 1;
-let powerTimer = 0; // sword power seconds
+// --------- GAME STATE ----------
+let sceneIndex = 0; // 0..2 (three backgrounds)
+const player = { x:120, y:H-110, w:64, h:96, speed:140, hp:100, dest:null, face:1, mana:100 };
+let raiders = []; // enemies
+let pickups = []; // items in world
+let npcs    = []; // interactable talkers (use thug sprite as placeholder “Mechanist/Scrivener”)
+
+let quest = { stage:0, need:{thermos:1, sword:1}, have:{thermos:0, sword:0} };
+let casting = { active:false, t:0 }; // chemurgy bolt
+let messageT = 0;
 let running = true;
 
-// Pinball ball (uses player sprite)
-const ball = {
-  x: W*0.2, y: H*0.5,
-  r: 18,
-  vx: 0, vy: 0,
-  maxSpeed: 520,
-  spin: 0, // visual-only
-  launching: true // waiting for drag-aim
-};
-
-// Bumpers/targets (thugs)
-let bumpers = []; // {x,y,r,alive:true}
-let pickups = []; // {x,y,w,h,type:'heal'|'sword',vx}
-let trail = [];   // motion trail segments
-
-// Drag aim
-let aiming = false;
-let aimStart = null;
-let aimVec   = {x:0,y:0};
-
-// ---------- Helpers ----------
-function resetBall() {
-  ball.x = W*0.2; ball.y = H*0.5;
-  ball.vx = 0; ball.vy = 0; ball.spin = 0;
-  ball.launching = true; aiming = false; aimStart = null; aimVec.x = aimVec.y = 0;
-}
-function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
-function dist2(ax,ay,bx,by){ const dx=ax-bx, dy=ay-by; return dx*dx+dy*dy; }
-function norm(x,y){ const d=Math.hypot(x,y)||1; return {x:x/d,y:y/d}; }
-function randomInRect(m){ return {x: (Math.random()*0.6+0.3)*W, y: (Math.random()*0.7+0.15)*H}; }
-
-// ---------- Level generation ----------
-function makeStage(index){
-  bumpers.length = 0;
-  pickups.length = 0;
-  // Place 7–10 thugs as round bumpers
-  const n = 8 + Math.floor(Math.random()*3);
-  for(let i=0;i<n;i++){
-    const p = randomInRect();
-    const r = 26 + Math.random()*10;
-    // keep away from initial ball position
-    if (Math.hypot(p.x - W*0.2, p.y - H*0.5) < 120) { i--; continue; }
-    bumpers.push({x:p.x, y:p.y, r, alive:true});
+// Scenes: each background gets different NPC & lines
+const SCENES = [
+  {
+    label:'Junkyard',
+    npcs:[{name:'The Mechanist', x: 140, y: H-110, role:'giver'}],
+    raiders: 5, // count to spawn
+    flavor: 'Gather reagents for the Anti-Plague Elixir.'
+  },
+  {
+    label:'Dark Alley',
+    npcs:[{name:'Street Scrivener', x: W-180, y: H-110, role:'scribe'}],
+    raiders: 6,
+    flavor: 'Ink your formula in forbidden ledgers.'
+  },
+  {
+    label:'Scrap Fortress',
+    npcs:[{name:'Gate Warden', x: W/2, y: H-220, role:'warden'}],
+    raiders: 8,
+    flavor: 'Brew the elixir and unseal the gate.'
   }
-  // Two pickups drifting left
-  spawnPickup('heal');
-  spawnPickup('sword');
-  resetBall();
-  multiplier = 1; powerTimer = 0;
-  stageEl.textContent = ASSETS.backgrounds[index] ? ASSETS.backgrounds[index].label : 'Stage';
+];
+
+function say(t, ms=1200){ msgEl.textContent = t; messageT = ms/1000; }
+
+// --------- INIT / SCENE BUILD ----------
+function buildScene(i){
+  const S = SCENES[i];
+  locEl.textContent = S.label;
+  goalEl.textContent= (quest.stage===0?'Goal: '+SCENES[0].flavor:
+                        quest.stage===1?'Goal: '+SCENES[1].flavor:
+                        'Goal: '+SCENES[2].flavor);
+  // place NPCs
+  npcs = S.npcs.map(n=>({ ...n }));
+  // spawn raiders
+  raiders = [];
+  for(let r=0;r<S.raiders;r++){
+    const rx = 200 + Math.random()*(W-260);
+    const ry = 80 + Math.random()*(H-160);
+    // keep away from player start & npc
+    if(Math.hypot(rx-player.x, ry-player.y)<120){ r--; continue; }
+    raiders.push({ x:rx, y:ry, w:64, h:96, hp:3, t:Math.random()*2 });
+  }
+  // spawn a few pickups
+  pickups = [];
+  dropItem('thermos', 3);
+  dropItem('sword', 2);
 }
-function spawnPickup(type){
-  // spawn on right moving left
-  const y = (Math.random()*0.7+0.15)*H;
-  pickups.push({ x: W + 30, y, w:48, h:48, type, vx: -80 });
+function dropItem(type, count=1){
+  for(let i=0;i<count;i++){
+    const px = 120 + Math.random()*(W-180);
+    const py = 80 + Math.random()*(H-140);
+    pickups.push({type, x:px, y:py, w:48, h:48});
+  }
 }
-function nextStage(){
-  stageIndex = (stageIndex + 1) % (ASSETS.backgrounds.length || 1);
-  makeStage(stageIndex);
-}
-
-// ---------- Init ----------
-function init(){
-  makeStage(stageIndex);
-  // Input: pointer to set aim and launch
-  c.addEventListener('pointerdown', (e)=>{
-    if(!running) return;
-    if(!ball.launching) return; // only when waiting
-    aiming = true;
-    const r = c.getBoundingClientRect();
-    aimStart = { x: e.clientX - r.left, y: e.clientY - r.top };
-    aimVec = {x:0,y:0};
-  });
-  c.addEventListener('pointermove', (e)=>{
-    if(!aiming) return;
-    const r = c.getBoundingClientRect();
-    const mx = e.clientX - r.left, my = e.clientY - r.top;
-    aimVec = { x: clamp(aimStart.x - mx, -220, 220), y: clamp(aimStart.y - my, -220, 220) };
-  });
-  c.addEventListener('pointerup', ()=>{
-    if(!aiming) return;
-    aiming = false;
-    // launch with opposite of drag (slingshot)
-    const scale = 2.2;
-    ball.vx = aimVec.x * scale;
-    ball.vy = aimVec.y * scale;
-    const sp = Math.hypot(ball.vx, ball.vy);
-    if(sp < 180){ // enforce minimum
-      const d = norm(ball.vx, ball.vy);
-      ball.vx = d.x * 180; ball.vy = d.y * 180;
-    }
-    // cap max
-    const sp2 = Math.hypot(ball.vx, ball.vy);
-    if(sp2 > ball.maxSpeed){
-      const d = ball.maxSpeed / sp2;
-      ball.vx *= d; ball.vy *= d;
-    }
-    ball.launching = false;
-  });
-
-  // Nudges
-  nudgeL.addEventListener('pointerdown', ()=>{ if(!ball.launching){ ball.vx -= 80; ball.spin -= 0.2; } });
-  nudgeR.addEventListener('pointerdown', ()=>{ if(!ball.launching){ ball.vx += 80; ball.spin += 0.2; } });
-
-  retryBtn.addEventListener('pointerdown', ()=>{
-    score = 0; lives = 3; running = true; overlay.style.display='none';
-    stageIndex = 0; makeStage(stageIndex);
-    updateHud();
-  });
-
-  updateHud();
+function startGame(){
+  sceneIndex = 0;
+  player.x=120; player.y=H-110; player.hp=100; quest = { stage:0, need:{thermos:1,sword:1}, have:{thermos:0,sword:0} };
+  buildScene(sceneIndex);
+  requestAnimationFrame(loop);
 }
 
-function updateHud(){
-  scoreEl.textContent = `Score ${score}`;
-  livesEl.textContent = `Balls ${lives}`;
-  multEl.textContent  = `x${multiplier}`;
-}
-
-// ---------- Physics & Collisions ----------
-function update(dt){
+// --------- INPUT ----------
+c.addEventListener('pointerdown', (e)=>{
   if(!running) return;
+  const r = c.getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  player.dest = { x: Math.max(0, Math.min(W-player.w, x-player.w/2)),
+                  y: Math.max(0, Math.min(H-player.h, y-player.h/2)) };
+  player.face = Math.sign((x - (player.x+player.w/2))) || 1;
+});
+btnBag.addEventListener('pointerdown', ()=>{
+  invOverlay(`Thermos: ${quest.have.thermos}/${quest.need.thermos} • Sword Coil: ${quest.have.sword}/${quest.need.sword}`);
+});
+btnCast.addEventListener('pointerdown', ()=>{
+  if(!running) return;
+  if(casting.active) return;
+  if(player.mana < 10){ say('Out of reagents!'); return; }
+  player.mana -= 10;
+  casting.active = true; casting.t = 0.28; // brief bolt window
+  say('Chemurgy Bolt!', 600);
+});
+btnTalk.addEventListener('pointerdown', ()=>{
+  if(!running) return;
+  // near any npc?
+  const n = nearNPC();
+  if(n) openDialog(n);
+  else say('No one hears you.');
+});
+retryBtn.addEventListener('pointerdown', ()=>{
+  overlay.style.display='none';
+  running = true;
+  startGame();
+});
 
-  // If ball is “waiting”, just spin it and wait for launch
-  if(ball.launching){
-    ball.spin += dt * 4;
-  } else {
-    // Move
-    ball.x += ball.vx * dt;
-    ball.y += ball.vy * dt;
-
-    // Friction
-    ball.vx *= (1 - 0.02);
-    ball.vy *= (1 - 0.02);
-
-    // Speed cap
-    const sp = Math.hypot(ball.vx, ball.vy);
-    if(sp > ball.maxSpeed){
-      const k = ball.maxSpeed / sp;
-      ball.vx *= k; ball.vy *= k;
-    }
-
-    // Walls
-    if(ball.x - ball.r < 0){ ball.x = ball.r; ball.vx = Math.abs(ball.vx)*0.95; ball.spin = -ball.spin; }
-    if(ball.x + ball.r > W){ ball.x = W - ball.r; ball.vx = -Math.abs(ball.vx)*0.95; ball.spin = -ball.spin; }
-    if(ball.y - ball.r < 0){ ball.y = ball.r; ball.vy = Math.abs(ball.vy)*0.95; ball.spin = -ball.spin; }
-    if(ball.y + ball.r > H){ // drain = lose a ball
-      loseBall();
-    }
-
-    // Bumper collisions (circle-circle)
-    let allDown = true;
-    for(const b of bumpers){
-      if(!b.alive) continue;
-      allDown = false;
-      const d2 = dist2(ball.x, ball.y, b.x, b.y);
-      const rr = (ball.r + b.r)*(ball.r + b.r);
-      if(d2 < rr){
-        const d = Math.sqrt(d2) || 1;
-        const nx = (ball.x - b.x)/d;
-        const ny = (ball.y - b.y)/d;
-        // Separate
-        const overlap = (ball.r + b.r) - d;
-        ball.x += nx * overlap;
-        ball.y += ny * overlap;
-        // Reflect velocity
-        const dot = ball.vx*nx + ball.vy*ny;
-        ball.vx -= 2*dot*nx;
-        ball.vy -= 2*dot*ny;
-        // Add a little boost
-        ball.vx += nx * 80; ball.vy += ny * 80;
-        // Score and possibly “pop” bumper
-        const hitScore = powerTimer>0 ? 150 : 100;
-        score += hitScore * multiplier;
-        // Chance to destroy bumper on power, else just flash
-        if(powerTimer>0 || Math.random()<0.2){
-          b.alive = false;
-        }
-        // chance to drop a heal
-        if(Math.random()<0.12){
-          pickups.push({x:b.x-24, y:b.y-24, w:48, h:48, type:'heal', vx: (Math.random()<0.5?-40:40)});
-        }
-        // trail burst
-        trail.push({x:ball.x, y:ball.y, life:0});
-      }
-    }
-
-    // If all bumpers down → next stage
-    if(allDown){
-      // small bonus
-      score += 500 * multiplier;
-      nextStage();
-    }
-
-    // Power timer
-    if(powerTimer>0){ powerTimer -= dt; if(powerTimer<=0){ powerTimer=0; multiplier = Math.max(1, multiplier-1); } }
-
-    // Pickups
-    for(let i=pickups.length-1;i>=0;i--){
-      const p = pickups[i];
-      p.x += (p.vx || 0) * dt;
-      // collect?
-      if(ball.x > p.x && ball.x < p.x+p.w && ball.y > p.y && ball.y < p.y+p.h){
-        if(p.type==='heal'){
-          // award points or “ball save”
-          score += 200;
-        } else if(p.type==='sword'){
-          // power mode
-          multiplier = Math.min(4, multiplier+1);
-          powerTimer = 6; // seconds
-        }
-        pickups.splice(i,1);
-      } else if(p.x < -p.w || p.x>W+p.w){ pickups.splice(i,1); }
-    }
-
-    // trail life
-    for(let i=trail.length-1;i>=0;i--){
-      const t = trail[i];
-      t.life += dt;
-      if(t.life>0.4) trail.splice(i,1);
-    }
+function nearNPC(){
+  for(const n of npcs){
+    if(Math.abs((n.x)-(player.x))<80 && Math.abs((n.y)-(player.y))<80) return n;
   }
-
-  updateHud();
+  return null;
 }
 
-function loseBall(){
-  lives -= 1;
-  if(lives <= 0){
-    running = false;
-    overTitle.textContent = 'Game Over';
-    overSub.textContent = `Score: ${score}`;
-    overlay.style.display = 'flex';
-  } else {
-    // quick reset
-    resetBall();
-  }
-}
-
-// ---------- Render ----------
-function draw(){
-  ctx.clearRect(0,0,W,H);
-
-  // Background
-  const bgObj = ASSETS.backgrounds[stageIndex];
-  if(bgObj && bgObj.img){
-    ctx.drawImage(bgObj.img, 0, 0, W, H);
-  } else {
-    ctx.fillStyle='#333'; ctx.fillRect(0,0,W,H);
-  }
-
-  // Pickups
-  for(const p of pickups){
-    const img = p.type==='heal' ? ASSETS.heal : ASSETS.sword;
-    if(img) ctx.drawImage(img, p.x, p.y, p.w, p.h);
-    else { ctx.fillStyle = p.type==='heal' ? '#ff6666' : '#ffd166'; ctx.fillRect(p.x,p.y,p.w,p.h); }
-  }
-
-  // Bumpers (thugs used as bumpers)
-  for(const b of bumpers){
-    if(!b.alive) continue;
-    // bumper circle
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(b.x, b.y, b.r+3, 0, Math.PI*2);
-    ctx.fillStyle = 'rgba(255,255,255,0.15)';
-    ctx.fill();
-    ctx.restore();
-    // draw thug sprite centered over bumper
-    const img = ASSETS.thug;
-    if(img){
-      const w=64, h=96;
-      ctx.drawImage(img, b.x - w/2, b.y - h/2, w, h);
+// --------- DIALOG ----------
+function openDialog(npc){
+  dialog.style.display='block';
+  dlgName.textContent = npc.name;
+  dlgChoices.innerHTML = '';
+  if(quest.stage===0 && npc.role==='giver'){
+    dlgText.textContent = "The air is sick. Fetch me a Thermos of radiant broth and a Sword Coil. We'll distill an Anti-Plague Elixir.";
+    addChoice('Accept', ()=>{ dialog.style.display='none'; quest.stage=1; goalEl.textContent=SCENES[1].flavor; say('Quest accepted.'); });
+    addChoice('Later',  ()=>{ dialog.style.display='none'; });
+  } else if(quest.stage===1){
+    if(quest.have.thermos>=quest.need.thermos && quest.have.sword>=quest.need.sword){
+      dlgText.textContent = "Perfect reagents. The Scrivener in the Alley will ink your formula.";
+      addChoice('Proceed', ()=>{ dialog.style.display='none'; sceneIndex=1; buildScene(sceneIndex); say('To the Alley!'); });
     } else {
-      ctx.fillStyle='#8e44ad';
-      ctx.fillRect(b.x-24, b.y-36, 48, 72);
+      dlgText.textContent = "Bring the Thermos and the Sword Coil. Raiders prowl—cast if you must.";
+      addChoice('Okay', ()=>{ dialog.style.display='none'; });
     }
-  }
-
-  // Ball trail
-  ctx.save();
-  for(const t of trail){
-    const a = 1 - t.life/0.4;
-    ctx.globalAlpha = a * 0.6;
-    ctx.fillStyle = powerTimer>0 ? '#ffd166' : '#aaffaa';
-    ctx.beginPath();
-    ctx.arc(t.x, t.y, 8, 0, Math.PI*2);
-    ctx.fill();
-  }
-  ctx.restore();
-
-  // Ball (player sprite)
-  if(ASSETS.player){
-    // spin effect: wobble scale slightly
-    const s = 1 + Math.sin(perfNow()*0.01 + ball.spin)*0.06;
-    const w = 64*s, h=96*s;
-    ctx.save();
-    ctx.translate(ball.x, ball.y);
-    ctx.rotate(ball.spin*0.15);
-    ctx.drawImage(ASSETS.player, -w/2, -h/2, w, h);
-    ctx.restore();
+  } else if(quest.stage===2 && npc.role==='scribe'){
+    dlgText.textContent = "Your sigils are true. One last rite: at the Fortress, brew and pour.";
+    addChoice('Onward', ()=>{ dialog.style.display='none'; sceneIndex=2; buildScene(sceneIndex); say('To the Fortress!'); });
+  } else if(quest.stage===3 && npc.role==='warden'){
+    dlgText.textContent = "The gate drinks the cure. Pour now, Drug Wizard.";
+    addChoice('Pour Elixir', ()=>{ dialog.style.display='none'; victory(); });
   } else {
-    ctx.fillStyle = '#2ecc71';
-    ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI*2); ctx.fill();
-  }
-
-  // Aim line if launching
-  if(ball.launching && aiming && aimStart){
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(ball.x, ball.y);
-    ctx.lineTo(ball.x + aimVec.x, ball.y + aimVec.y);
-    ctx.stroke();
+    // generic talk
+    dlgText.textContent = "Keep your goggles tight, wizard.";
+    addChoice('Close', ()=> dialog.style.display='none');
   }
 }
+function addChoice(txt, fn){
+  const b = document.createElement('button');
+  b.className = 'choice';
+  b.textContent = txt;
+  b.onclick = fn;
+  dlgChoices.appendChild(b);
+}
+function invOverlay(text){
+  dialog.style.display='block';
+  dlgName.textContent = 'Satchel';
+  dlgText.textContent = text;
+  dlgChoices.innerHTML = '';
+  addChoice('Close', ()=> dialog.style.display='none');
+}
+function victory(){
+  overlay.style.display='flex';
+  document.getElementById('overTitle').textContent = 'Gate Unsealed';
+  document.getElementById('overSub').textContent   = 'The Junkyard breathes easier tonight.';
+}
 
+// --------- UPDATE / DRAW ----------
 let last=0;
-function perfNow(){ return performance.now ? performance.now() : Date.now(); }
 function loop(ts){
-  const dt = Math.min(0.033, (ts - last)/1000 || 0.016);
+  const dt = Math.min(0.033, (ts-last)/1000 || 0.016);
   last = ts;
-  update(dt);
+  if(running) update(dt);
   draw();
   requestAnimationFrame(loop);
 }
+
+function update(dt){
+  if(messageT>0){ messageT-=dt; if(messageT<=0) msgEl.textContent=''; }
+
+  // move player
+  if(player.dest){
+    const dx = player.dest.x - player.x;
+    const dy = player.dest.y - player.y;
+    const d = Math.hypot(dx,dy);
+    const mv = player.speed * dt;
+    if(d <= mv){ player.x = player.dest.x; player.y = player.dest.y; player.dest = null; }
+    else { player.x += dx/d*mv; player.y += dy/d*mv; }
+  }
+
+  // raiders wander & hurt on touch
+  for(const r of raiders){
+    r.t -= dt;
+    if(r.t<=0){
+      r.t = 1 + Math.random()*2;
+      r.vx = (Math.random()*2-1) * 40;
+      r.vy = (Math.random()*2-1) * 40;
+    }
+    r.x = Math.max(20, Math.min(W-84, r.x + (r.vx||0)*dt));
+    r.y = Math.max(20, Math.min(H-116, r.y + (r.vy||0)*dt));
+
+    // contact damage
+    if( overlap(player, r) ){
+      player.hp = Math.max(0, player.hp - 15*dt);
+      if(player.hp<=0){ running=false; overlay.style.display='flex'; }
+    }
+  }
+
+  // casting window: tap screen chooses implicit forward ray; we auto-target nearest raider in front
+  if(casting.active){
+    casting.t -= dt;
+    // auto-hit nearest raider in facing direction
+    const target = nearestInFront(raiders, player);
+    if(target){
+      target.hp -= 6*dt; // DoT while window active
+      if(target.hp<=0){
+        // drop one random reagent sometimes
+        if(Math.random()<0.4){
+          pickups.push({
+            type: Math.random()<0.5 ? 'thermos' : 'sword',
+            x: target.x+8, y: target.y+8, w:48, h:48
+          });
+        }
+        // remove target
+        raiders.splice(raiders.indexOf(target),1);
+      }
+    }
+    if(casting.t<=0) casting.active=false;
+  }
+
+  // pick up items
+  for(let i=pickups.length-1;i>=0;i--){
+    const p = pickups[i];
+    if( overlap(player,p) ){
+      quest.have[p.type] = (quest.have[p.type]||0)+1;
+      say(`+1 ${p.type}`);
+      pickups.splice(i,1);
+      updateInv();
+      // progress quest stages
+      if(quest.stage===1 &&
+         quest.have.thermos>=quest.need.thermos &&
+         quest.have.sword>=quest.need.sword){
+        quest.stage=2; goalEl.textContent = SCENES[1].flavor; say('Return to the Scrivener in the Alley.');
+      }
+      if(quest.stage===2 && sceneIndex===1){
+        // talking to scrivener advances to stage 3 via dialog
+      }
+    }
+  }
+
+  hpEl.textContent = 'HP ' + Math.round(player.hp);
+}
+
+function updateInv(){
+  const t = (quest.have.thermos||0)+'/'+quest.need.thermos;
+  const s = (quest.have.sword||0)+'/'+quest.need.sword;
+  invEl.textContent = `Inv: Thermos ${t} • Coil ${s}`;
+}
+
+function overlap(a,b){
+  return a.x < b.x + (b.w||48) && a.x + (a.w||64) > b.x &&
+         a.y < b.y + (b.h||48) && a.y + (a.h||96) > b.y;
+}
+function nearestInFront(arr, p){
+  let best=null, bd=Infinity;
+  for(const e of arr){
+    const cx = e.x + e.w/2, cy = e.y + e.h/2;
+    const px = p.x + p.w/2, py = p.y + p.h/2;
+    const dx = cx - px, dy = cy - py;
+    const facing = Math.sign(p.face||1);
+    if(Math.sign(dx) !== facing) continue;
+    const d = Math.hypot(dx,dy);
+    if(d<bd){ bd=d; best=e; }
+  }
+  return best;
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.imageSmoothingEnabled = false;
+
+  // background
+  const bg = ASSETS.backgrounds[sceneIndex];
+  if(bg && bg.img){ ctx.drawImage(bg.img,0,0,W,H); }
+  else { ctx.fillStyle='#333'; ctx.fillRect(0,0,W,H); }
+
+  // pickups
+  for(const p of pickups){
+    const img = (p.type==='thermos')? ASSETS.thermos : ASSETS.sword;
+    if(img) ctx.drawImage(img, p.x, p.y, p.w, p.h);
+    else { ctx.fillStyle = p.type==='thermos' ? '#ff6666' : '#ffd166'; ctx.fillRect(p.x,p.y,p.w,p.h); }
+  }
+
+  // npcs
+  for(const n of npcs){
+    // use thug sprite as placeholder NPC portrait in-world
+    if(ASSETS.thug) ctx.drawImage(ASSETS.thug, n.x, n.y, 64, 96);
+    else { ctx.fillStyle='#88f'; ctx.fillRect(n.x,n.y,64,96); }
+    // floating label
+    ctx.fillStyle='rgba(0,0,0,.45)'; ctx.fillRect(n.x-6,n.y-18, 120, 16);
+    ctx.fillStyle='#fff'; ctx.font='12px system-ui';
+    ctx.fillText(n.name, n.x, n.y-6);
+  }
+
+  // raiders
+  for(const r of raiders){
+    if(ASSETS.thug) ctx.drawImage(ASSETS.thug, r.x, r.y, r.w, r.h);
+    else { ctx.fillStyle='#a46'; ctx.fillRect(r.x,r.y,r.w,r.h); }
+  }
+
+  // player
+  if(ASSETS.player) ctx.drawImage(ASSETS.player, player.x, player.y, player.w, player.h);
+  else { ctx.fillStyle='#2ecc71'; ctx.fillRect(player.x,player.y,player.w,player.h); }
+
+  // casting arc
+  if(casting.active){
+    ctx.globalAlpha=.5;
+    ctx.fillStyle='#9ff';
+    const ax = player.face>=0 ? player.x+player.w : player.x-24;
+    const ay = player.y+20;
+    ctx.fillRect(ax, ay, 28, 56);
+    ctx.globalAlpha=1;
+  }
+}
+
+// --------- PROGRESSION HOOKS ----------
+function advanceIfReady(){
+  // Called after dialog confirmations
+}
+
+// Hide asset box after a few seconds (still handy on first run)
+setTimeout(()=> assetsBox.style.display='none', 5000);
+
 })();
 </script>
 </body>
